@@ -209,38 +209,33 @@ type ProductPic struct {
 }
 
 type Product struct {
-	ProductId         int64      `json:"product_id,omitempty"`
-	ProductName       string     `json:"product_name,omitempty"`
-	ProductCategory   string     `json:"product_category,omitempty"` //M or F or U
-	GlassType         string     `json:"glass_type,omitempty"`       //polarized or clear&photochromatic lenses
-	ProductPrice      float64    `json:"product_price,omitempty"`
-	ProductURL        ProductPic `json:"product_pictures,omitempty"`
-	ProductDimensions []int64    `json:"dimensions,omitempty"`
-	FrameSize         string     `json:"frame_size,omitempty"`
-	FrameColor        []string   `json:"frame_color,omitempty"`
-	FrameType         string     `json:"frame_type,omitempty"`
-	FrameShape        string     `json:"frame_shape,omitempty"`
-	FrameMaterial     string     `json:"rame_material,omitempty"`
-	Fit               string     `json:"fit,omitempty"`
-	LensFeature       string     `json:"lens_feature,omitempty"`
-	LensHeight        int64      `json:"lens_height,omitempty"`
-	LensColor         string     `json:"lens_color,omitempty"`
-	LensMaterial      string     `json:"lens_material,omitempty"`
-	SuitableFaces     []string   `json:"suitable_faces,omitempty"`
-	ProductInfo       string     `json:"product_info,omitempty"`
-	AvailableQuantity int64      `json:"available_quantity,omitempty"`
-	DiscountedPrice   *float64   `json:"discounted_price,omitempty"`
-	Brand             *Brand     `json:"brand,omitempty"`
-	Token             string     `json:"token,omitempty"`
-}
-
-type HomepageData struct {
-	Brands   []Brand   `json:"brands,omitempty"`
-	Products []Product `json:"products,omitempty"`
+	ProductId         int64    `json:"product_id,omitempty"`
+	ProductName       string   `json:"product_name,omitempty"`
+	ProductCategory   string   `json:"product_category,omitempty"` //M or F or U
+	GlassType         string   `json:"glass_type,omitempty"`       //polarized or clear&photochromatic lenses
+	ProductPrice      float64  `json:"product_price,omitempty"`
+	ProductURL        []string `json:"product_pictures,omitempty"`
+	ProductDimensions []int64  `json:"dimensions,omitempty"`
+	FrameSize         string   `json:"frame_size,omitempty"`
+	FrameColor        []string `json:"frame_color,omitempty"`
+	FrameType         string   `json:"frame_type,omitempty"`
+	FrameShape        string   `json:"frame_shape,omitempty"`
+	FrameMaterial     string   `json:"rame_material,omitempty"`
+	Fit               string   `json:"fit,omitempty"`
+	LensFeature       string   `json:"lens_feature,omitempty"`
+	LensHeight        int64    `json:"lens_height,omitempty"`
+	LensColor         string   `json:"lens_color,omitempty"`
+	LensMaterial      string   `json:"lens_material,omitempty"`
+	SuitableFaces     []string `json:"suitable_faces,omitempty"`
+	ProductInfo       string   `json:"product_info,omitempty"`
+	AvailableQuantity int64    `json:"available_quantity,omitempty"`
+	DiscountedPrice   *float64 `json:"discounted_price,omitempty"`
+	Brand             *Brand   `json:"brand,omitempty"`
+	Token             string   `json:"token,omitempty"`
 }
 
 // homepage handler
-func Homepage(w http.ResponseWriter, r *http.Request) {
+func AllBrands(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -260,27 +255,8 @@ func Homepage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var data HomepageData
-	brand_id := 1
-	limit := 10
-	row, err := db.DB.Query("SELECT product_id,brand_name,product_image[1],product_image[3],product_price FROM products INNER JOIN brands ON products.brand_id = brands.brand_id  WHERE products.brand_id=$1 limit $2 ", brand_id, limit)
-	if err != nil {
-		fmt.Println(err)
-		http.Error(w, "Error retiriving products", http.StatusInternalServerError)
-		return
-	}
-	for row.Next() {
-		var product_info Product
-		err = row.Scan(&product_info.ProductId, &product_info.ProductName, &product_info.ProductURL.Front, &product_info.ProductURL.Side, &product_info.ProductPrice)
-		if err != nil {
-			http.Error(w, "Scan error on products", http.StatusInternalServerError)
-			return
-		}
-		data.Products = append(data.Products, product_info)
-
-	}
-
-	row, err = db.DB.Query("SELECT brand_id,brand_name,brand_logo,brand_images FROM brands")
+	var brand []Brand
+	row, err := db.DB.Query("SELECT brand_id,brand_name,brand_logo,brand_images FROM brands")
 	if err != nil {
 		http.Error(w, "Query error on brands", http.StatusInternalServerError)
 		return
@@ -292,10 +268,10 @@ func Homepage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Scan error on brands", http.StatusInternalServerError)
 			return
 		}
-		data.Brands = append(data.Brands, brand_info)
+		brand = append(brand, brand_info)
 	}
 
-	err = json.NewEncoder(w).Encode(data)
+	err = json.NewEncoder(w).Encode(brand)
 	if err != nil {
 		http.Error(w, "Error encoding response", http.StatusInternalServerError)
 		return
@@ -304,49 +280,7 @@ func Homepage(w http.ResponseWriter, r *http.Request) {
 }
 
 // collections/women handler
-func CollectionWomen(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var jwttoken Token
-	err := json.NewDecoder(r.Body).Decode(&jwttoken)
-	if err != nil {
-		http.Error(w, "Error decoding request body", http.StatusBadRequest)
-		return
-	}
-	//specify the permission id
-	valid, _ := authorise.CheckPerm(jwttoken.Token, 7)
-	if !valid {
-		http.Error(w, "User unauthorised", http.StatusUnauthorized)
-		return
-	}
-
-	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price FROM products WHERE category='F'")
-	if err != nil {
-		fmt.Println(err)
-		http.Error(w, "Query error on products", http.StatusInternalServerError)
-		return
-	}
-
-	for row.Next() {
-		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice)
-		if err != nil {
-			http.Error(w, "Scan error on products", http.StatusInternalServerError)
-			return
-		}
-		products = append(products, prod)
-	}
-
-	json.NewEncoder(w).Encode(products)
-}
-
-// polarized glasses for women
-func PolarizedGlassFor(w http.ResponseWriter, r *http.Request) {
+func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -354,53 +288,12 @@ func PolarizedGlassFor(w http.ResponseWriter, r *http.Request) {
 	}
 
 	category := path.Base(r.URL.Path)
-	if category == "women" {
-		category = "F"
-	}
 	if category == "men" {
 		category = "M"
 	}
 
-	var jwttoken Token
-	err := json.NewDecoder(r.Body).Decode(&jwttoken)
-	if err != nil {
-		http.Error(w, "Error decoding request body", http.StatusBadRequest)
-		return
-	}
-	//specify the permission id
-	valid, _ := authorise.CheckPerm(jwttoken.Token, 7)
-	if !valid {
-		http.Error(w, "User unauthorised", http.StatusUnauthorized)
-		return
-	}
-
-	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price,glass_type FROM products WHERE category=$1 AND glass_type='POLARIZED'", category)
-	if err != nil {
-		fmt.Println(err)
-		http.Error(w, "Query error on products", http.StatusInternalServerError)
-		return
-	}
-
-	for row.Next() {
-		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice, &prod.GlassType)
-		if err != nil {
-			http.Error(w, "Scan error on products", http.StatusInternalServerError)
-			return
-		}
-		products = append(products, prod)
-	}
-
-	json.NewEncoder(w).Encode(products)
-}
-
-// clear and photochrmatic lense
-func ClearPhotochramatic(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
+	if category == "women" {
+		category = "F"
 	}
 
 	var jwttoken Token
@@ -417,7 +310,7 @@ func ClearPhotochramatic(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price,glass_type FROM products WHERE glass_type='Clear & Photochromatic lenses'")
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price FROM products WHERE category=$1", category)
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
@@ -426,7 +319,7 @@ func ClearPhotochramatic(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice, &prod.GlassType)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
@@ -438,7 +331,7 @@ func ClearPhotochramatic(w http.ResponseWriter, r *http.Request) {
 }
 
 // collection/brand -> get products by brand name
-func Brands(w http.ResponseWriter, r *http.Request) {
+func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -466,7 +359,7 @@ func Brands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price,discounted_price,glass_type FROM products WHERE brand_id=$1", brandId)
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,discounted_price,glass_type FROM products WHERE brand_id=$1", brandId)
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
@@ -475,7 +368,7 @@ func Brands(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice, &prod.DiscountedPrice, &prod.GlassType)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.DiscountedPrice, &prod.GlassType)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
@@ -486,7 +379,7 @@ func Brands(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(products)
 }
 
-// new arrival
+// new arrival --queried based on recently added products
 func NewArrival(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
@@ -508,7 +401,7 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price,glass_type FROM products WHERE created_at > now()-INTERVAL '15' day")
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type FROM products WHERE created_at > now()-INTERVAL '15' day")
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
@@ -517,7 +410,7 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice, &prod.GlassType)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
@@ -549,7 +442,7 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price,glass_type,discounted_price FROM products WHERE discounted_price IS NOT NULL")
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price FROM products WHERE discounted_price IS NOT NULL")
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
@@ -558,7 +451,7 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL, &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
@@ -569,6 +462,7 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(products)
 }
 
+// request body to get products by gender(men/women)
 type ProductByCategory struct {
 	Token    string `json:"token"`
 	Brand_id int64  `json:"brand_id"`
@@ -597,7 +491,7 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price,glass_type,discounted_price,category FROM products WHERE brand_id=$1 AND category=$2", info.Brand_id, info.Category)
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price,category FROM products WHERE brand_id=$1 AND category=$2", info.Brand_id, info.Category)
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
@@ -606,7 +500,7 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
@@ -645,7 +539,7 @@ func ProductById(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var prod Product
-	err = db.DB.QueryRow("SELECT product_id,product_name,dimensions,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,glass_type,product_image[1],product_image[2],product_image[3],product_image[4],product_price,discounted_price,brand_name,brand_logo,brand_info FROM products inner join brands ON products.brand_id=brands.brand_id WHERE product_id=$1", id).Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductDimensions), &prod.FrameSize, pq.Array(&prod.FrameColor), &prod.FrameType, &prod.FrameShape, &prod.FrameMaterial, &prod.Fit, &prod.LensFeature, &prod.LensHeight, &prod.LensColor, &prod.LensMaterial, pq.Array(&prod.SuitableFaces), &prod.ProductInfo, &prod.GlassType, &prod.ProductURL.Front, &prod.ProductURL.Back, &prod.ProductURL.Side, &prod.ProductURL.Top, &prod.ProductPrice, &prod.DiscountedPrice, &prod.Brand.BrandName, &prod.Brand.BrandLogo, &prod.Brand.BrandInfo)
+	err = db.DB.QueryRow("SELECT product_id,product_name,dimensions,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,glass_type,product_image,product_price,discounted_price,brand_name,brand_logo,brand_info FROM products inner join brands ON products.brand_id=brands.brand_id WHERE product_id=$1", id).Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductDimensions), &prod.FrameSize, pq.Array(&prod.FrameColor), &prod.FrameType, &prod.FrameShape, &prod.FrameMaterial, &prod.Fit, &prod.LensFeature, &prod.LensHeight, &prod.LensColor, &prod.LensMaterial, pq.Array(&prod.SuitableFaces), &prod.ProductInfo, &prod.GlassType, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.DiscountedPrice, &prod.Brand.BrandName, &prod.Brand.BrandLogo, &prod.Brand.BrandInfo)
 
 	if err != nil {
 		fmt.Println(err)
@@ -685,7 +579,7 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image[1],product_image[3],product_price,glass_type,discounted_price,category FROM products WHERE $1=ANY(tags)", tagid)
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price,category FROM products WHERE $1=ANY(tags)", tagid)
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
@@ -694,7 +588,7 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL.Front, &prod.ProductURL.Side, &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
@@ -736,6 +630,7 @@ func CreateBrands(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(brandData.BrandId)
 }
 
+// update brands
 func UpdateBrands(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -821,7 +716,7 @@ func CreateProduct(w http.ResponseWriter, r *http.Request) {
 	insertQuery := `INSERT INTO products(product_name,dimensions,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,product_price,discounted_price,available_quantity,brand_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
 	err = db.DB.QueryRow(insertQuery, productData.ProductName, pq.Array(productData.ProductDimensions), productData.FrameSize, productData.FrameColor, productData.FrameType, productData.FrameShape, productData.FrameMaterial, productData.Fit, productData.LensFeature, productData.LensHeight, productData.LensColor, productData.LensMaterial, pq.Array(&productData.SuitableFaces), productData.ProductInfo, productData.ProductPrice, productData.DiscountedPrice, productData.Brand.BrandId).Scan(&productData.ProductId)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error creating product", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(productData.ProductId)
@@ -849,10 +744,10 @@ func UpdateProductImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	updateQuery := `"UPDATE products set product_images[1]=$1,product_images[2]=$2,product_images[3]=$3,product_images[4]=$4 WHERE product_id=$5`
-	_, err = db.DB.Exec(updateQuery, productData.ProductURL.Front, productData.ProductURL.Back, productData.ProductURL.Side, productData.ProductURL.Back, productData.ProductId)
+	updateQuery := `UPDATE products set product_image=$1 WHERE product_id=$2`
+	_, err = db.DB.Exec(updateQuery, pq.Array(productData.ProductURL), productData.ProductId)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error updating product images", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(productData.ProductId)
@@ -885,7 +780,7 @@ func UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	err = db.DB.QueryRow(insertQuery, productData.ProductName, pq.Array(productData.ProductDimensions), productData.FrameSize, productData.FrameColor, productData.FrameType, productData.FrameShape, productData.FrameMaterial, productData.Fit, productData.LensFeature, productData.LensHeight, productData.LensColor, productData.LensMaterial, pq.Array(&productData.SuitableFaces), productData.ProductInfo, productData.ProductPrice, productData.DiscountedPrice, productData.Brand.BrandId).Scan(&productData.ProductId)
 	if err != nil {
 		fmt.Fprintln(w, err)
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error updating product", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(productData.ProductId)
@@ -922,7 +817,7 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 
 	err = db.DB.QueryRow("INSERT INTO roles(role_name,permissions) VALUES($1,$2)", role.RoleName, pq.Array(&role.Permissions)).Scan(&role.RoleID)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error creating role", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(role.RoleID)
@@ -952,7 +847,7 @@ func UpdateRole(w http.ResponseWriter, r *http.Request) {
 
 	err = db.DB.QueryRow("UPDATE roles set role_name=$1,permissions=$2 ", role.RoleName, pq.Array(&role.Permissions)).Scan(&role.RoleID)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error updating role", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(role.RoleID)
@@ -983,7 +878,7 @@ func DeleteRole(w http.ResponseWriter, r *http.Request) {
 
 	_, err = db.DB.Exec("DELETE FROM roles WHERE role_id=$1", role.RoleID)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error deleting role", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(role.RoleID)
@@ -1014,7 +909,7 @@ func GetAllRoles(w http.ResponseWriter, r *http.Request) {
 
 	row, err := db.DB.Query("SELECT role_id,role_name,permissions FROM roles")
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error getting roles", http.StatusInternalServerError)
 		return
 	}
 	for row.Next() {
@@ -1060,7 +955,7 @@ func CreatePermission(w http.ResponseWriter, r *http.Request) {
 
 	err = db.DB.QueryRow("INSERT INTO permissions(permission_name) VALUES($1)", permission.PermissionName).Scan(&permission.PermissionId)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error creating permission", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(permission.PermissionId)
@@ -1090,7 +985,7 @@ func UpdatePermission(w http.ResponseWriter, r *http.Request) {
 
 	_, err = db.DB.Exec("UPDATE permissions SET permission_name=$1 WHERE permission_id=$2)", perm.PermissionName, perm.PermissionId)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error updating permission", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(perm)
@@ -1120,7 +1015,7 @@ func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 
 	row, err := db.DB.Query("SELECT permission_id,permission_name FROM permissions")
 	if err != nil {
-		http.Error(w, "Error inserting permission", http.StatusInternalServerError)
+		http.Error(w, "Error retriving permissions", http.StatusInternalServerError)
 		return
 	}
 	for row.Next() {
@@ -1133,7 +1028,7 @@ func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 		perms = append(perms, p)
 	}
 	json.NewEncoder(w).Encode(perms)
-	fmt.Fprintln(w, "Updated role successfully")
+
 }
 
 // delete permission
@@ -1160,7 +1055,7 @@ func DeletePermission(w http.ResponseWriter, r *http.Request) {
 
 	_, err = db.DB.Exec("DELETE FROM permissions WHERE permission_id=$1", perm.PermissionId)
 	if err != nil {
-		http.Error(w, "Error deleteing brand", http.StatusInternalServerError)
+		http.Error(w, "Error deleting permissions", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode("Deleted permission successfully")
@@ -1176,7 +1071,6 @@ type Tags struct {
 
 // get all tags
 func GetAllTags(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1241,7 +1135,7 @@ func CreateTag(w http.ResponseWriter, r *http.Request) {
 
 	err = db.DB.QueryRow("INSERT INTO tags(tag_name) VALUES($1)", tag.TagName).Scan(&tag.TagId)
 	if err != nil {
-		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
+		http.Error(w, "Error creating tags", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode(tag.TagId)
@@ -1271,13 +1165,13 @@ func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
 
 	err = db.DB.QueryRow("UPDATE tags SET tag_image_url=$1", tagImage.TagImages).Scan(pq.Array(&tagImage.TagImages))
 	if err != nil {
-		http.Error(w, "Error updateing tag", http.StatusInternalServerError)
+		http.Error(w, "Error updating tag image", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode("Tag updated succefully")
+	json.NewEncoder(w).Encode("Tag updated successfully")
 }
 
-// update tag
+// update tagbinages
 func UpdateTag(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -1331,9 +1225,12 @@ func DeleteTag(w http.ResponseWriter, r *http.Request) {
 
 	_, err = db.DB.Exec("DELETE FROM tags WHERE SET tag_id=$1", tag.TagId)
 	if err != nil {
-		http.Error(w, "Error updating tag", http.StatusInternalServerError)
+		http.Error(w, "Error deleting tag", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode("Tag Deleted successfully")
 }
 
+//create handler for updating only the price and dicounted_price columns of products
+
+//
