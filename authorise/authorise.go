@@ -10,7 +10,7 @@ import (
 
 func CheckRolePerm(role, perm int64) (error, bool) {
 	var authorised bool
-	err := db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM roles WHERE $1 = ANY(permissions) AND role_id=$2)", perm, role).Scan(&authorised)
+	err := db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM role_perm WHERE role_id=$1 AND perm_id=$2)", role, perm).Scan(&authorised)
 	if err != nil {
 		return err, false
 	}
@@ -20,8 +20,7 @@ func CheckRolePerm(role, perm int64) (error, bool) {
 	return nil, true
 }
 
-
-//to get roles from token
+// to get roles from token
 func GetRoles(tokenStr string) ([]int64, error) {
 	claims := &token.JwtClaims{}
 

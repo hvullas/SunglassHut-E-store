@@ -2,7 +2,6 @@ package main
 
 import (
 	"backend/handlers"
-	"fmt"
 	"net/http"
 
 	"backend/db"
@@ -12,15 +11,13 @@ import (
 
 func main() {
 
-	db.ConnectRedis()
+	// db.ConnectRedis()
 
-	pong, err := db.RedisClient.Ping().Result()
-	fmt.Println(pong, err)
+	// pong, err := db.RedisClient.Ping().Result()
+	// fmt.Println(pong, err)
 
-	
-
-	// db.ConnectDB()
-	// defer db.DB.Close()
+	db.ConnectDB()
+	defer db.DB.Close()
 
 	http.HandleFunc("/newUser", handlers.NewUser)
 
@@ -32,7 +29,7 @@ func main() {
 
 	http.HandleFunc("/products-by-brand/", handlers.ProductsByBrand)
 
-	http.HandleFunc("/collection/new-arrival", handlers.NewArrival)
+	http.HandleFunc("/new-arrival", handlers.NewArrival)
 
 	http.HandleFunc("/products/sales", handlers.Sales)
 
@@ -40,13 +37,15 @@ func main() {
 
 	http.HandleFunc("/product-by-id/", handlers.ProductById)
 
-	http.HandleFunc("/tag/", handlers.ProductByTag)
+	http.HandleFunc("/product-by-tag/", handlers.ProductByTag)
 
-	http.HandleFunc("/tags", handlers.GetAllTags)
+	http.HandleFunc("/list-alltags", handlers.GetAllTags)
 
-	http.HandleFunc("/create-brands", handlers.CreateBrands)
+	http.HandleFunc("/create-brand", handlers.CreateBrands)
 
 	http.HandleFunc("/update-brand", handlers.UpdateBrands)
+
+	http.HandleFunc("/update-brand-image", handlers.UpdateBrandImages)
 
 	http.HandleFunc("/delete-brand", handlers.DeleteBrands)
 
@@ -55,6 +54,8 @@ func main() {
 	http.HandleFunc("/update-product-images", handlers.UpdateProductImages)
 
 	http.HandleFunc("/update-product", handlers.UpdateProduct)
+
+	http.HandleFunc("/delete-product", handlers.DeleteProduct)
 
 	http.HandleFunc("/create-role", handlers.CreateRole)
 

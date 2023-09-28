@@ -7,8 +7,10 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"path"
+	"regexp"
 	"strconv"
 	"time"
 
@@ -17,19 +19,21 @@ import (
 )
 
 type NewUserReg struct {
-	UserName    string `json:"user_name"`
-	Email       string `json:"email"`
-	PhoneNumber string `json:"phone_number"`
-	Password    string `json:"password"`
-	Role        []int  `json:"role"`
+	UserName    string  `json:"user_name"`
+	Email       string  `json:"email"`
+	PhoneNumber string  `json:"phone_number"`
+	Password    string  `json:"password"`
+	Role        []int64 `json:"role"`
 }
 
 type UserId struct {
-	UserId int64 `json:"user_id"`
+	UserId int64  `json:"user_id,omitempty"`
+	Token  string `json:"token,omitempty"`
 }
 
 // user registration handler
 func NewUser(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		w.WriteHeader(405) //method not allowed
@@ -71,47 +75,49 @@ func NewUser(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 	var exists bool
-	err = db.DB.QueryRow("SELECT EXISTS (SELECT 1 FROM users WHERE email=$1)", userdata.Email).Scan(&exists)
+	err = db.DB.QueryRow("SELECT EXISTS (SELECT 1 FROM users WHERE email=$1 AND phone_number=$2)", userdata.Email, userdata.PhoneNumber).Scan(&exists)
 	if err != nil {
 		panic(err)
 	}
 
 	if exists {
-		fmt.Fprintln(w, "User exists with this mail id")
-		return
-	}
-	err = db.DB.QueryRow("SELECT EXISTS (SELECT 1 FROM users WHERE phone_number=$1)", userdata.PhoneNumber).Scan(&exists)
-	if err != nil {
-		panic(err)
-	}
-
-	if exists {
-		fmt.Fprintln(w, "User exists with this Phone number")
+		http.Error(w, "User exists with this mail id or phone number", http.StatusBadRequest)
 		return
 	}
 
 	if len(userdata.Role) == 0 {
-		userdata.Role = append(userdata.Role, 2)
+		http.Error(w, "Role not mentioned", http.StatusBadRequest)
 	}
 	var userId UserId
 	err = db.DB.QueryRow("INSERT INTO users(name,email,phone_number,role,password) VALUES($1,$2,$3,$4,$5) RETURNING user_id", userdata.UserName, userdata.Email, userdata.PhoneNumber, pq.Array(userdata.Role), string(hash)).Scan(&userId.UserId)
 	if err != nil {
 		fmt.Println(err)
-		http.Error(w, "Error inserting to db", http.StatusInternalServerError)
+		http.Error(w, "Error creating user", http.StatusInternalServerError)
 		return
+	}
+
+	for _, val := range userdata.Role {
+
+		_, err = db.DB.Exec("INSERT INTO user_role(user_id,role_id) VALUES($1,$2)", userId.UserId, val)
+		if err != nil {
+			http.Error(w, "Error assigning role to user", http.StatusInternalServerError)
+			return
+		}
+
 	}
 
 	claims := &token.JwtClaims{
 		Username: userdata.UserName,
-		Roles:    []int64{2},
+		Roles:    userdata.Role,
 	}
-	token, err := token.GenrateToken(claims, time.Now().Add(time.Hour*300))
+
+	userId.Token, err = token.GenrateToken(claims, time.Now().Add(time.Hour*300))
 	if err != nil {
 		http.Error(w, "error generating token", http.StatusInternalServerError)
 		return
 	}
 
-	err = json.NewEncoder(w).Encode(token)
+	err = json.NewEncoder(w).Encode(userId)
 	if err != nil {
 		http.Error(w, "Error encoding response", http.StatusInternalServerError)
 		return
@@ -126,13 +132,15 @@ type Credentials struct {
 }
 
 type Session struct {
-	Token string  `json:"token"`
-	Role  []int64 `json:"role"`
+	UserId int64   `json:"user_id"`
+	Name   string  `json:"user_name"`
+	Role   []int64 `json:"role"`
+	Token  string  `json:"token"`
 }
 
 // login handler
 func Login(w http.ResponseWriter, r *http.Request) {
-
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -145,15 +153,16 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error decoding the body", http.StatusBadRequest)
 		return
 	}
+	var session Session
 	var passwordHash, name string
 	var role pq.Int64Array
-	err = db.DB.QueryRow("SELECT password,role,name FROM users WHERE email=$1", credentials.Email).Scan(&passwordHash, &role, &name)
+	err = db.DB.QueryRow("SELECT user_id,name,password,role FROM users WHERE email=$1", credentials.Email).Scan(&session.UserId, &session.Name, &passwordHash, &role)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			fmt.Fprintln(w, "Invalid email")
 			return
 		}
-		fmt.Fprintln(w, err)
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
 		return
 	}
 	err = bcrypt.CompareHashAndPassword([]byte(passwordHash), []byte(credentials.Password))
@@ -167,8 +176,6 @@ func Login(w http.ResponseWriter, r *http.Request) {
 	}
 
 	expirationTime := time.Now().Add(time.Hour * 300)
-
-	var session Session
 
 	session.Token, err = token.GenrateToken(claims, expirationTime)
 	if err != nil {
@@ -230,12 +237,15 @@ type Product struct {
 	ProductInfo       string   `json:"product_info,omitempty"`
 	AvailableQuantity int64    `json:"available_quantity,omitempty"`
 	DiscountedPrice   *float64 `json:"discounted_price,omitempty"`
-	Brand             *Brand   `json:"brand,omitempty"`
-	Token             string   `json:"token,omitempty"`
+	Brand             Brand    `json:"brand,omitempty"`
+	BrandId           int64    `json:"brand_id,omitempty"`
+
+	Token string `json:"token,omitempty"`
 }
 
 // homepage handler
 func AllBrands(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -268,6 +278,10 @@ func AllBrands(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Scan error on brands", http.StatusInternalServerError)
 			return
 		}
+		brand_info.BrandLogo = "http://localhost:3000/brandlogo/" + brand_info.BrandLogo
+		for i, val := range brand_info.BrandImage {
+			brand_info.BrandImage[i] = "http://localhost:3000/brandimage/" + val
+		}
 		brand = append(brand, brand_info)
 	}
 
@@ -281,6 +295,7 @@ func AllBrands(w http.ResponseWriter, r *http.Request) {
 
 // collections/women handler
 func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -303,14 +318,14 @@ func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(jwttoken.Token, 7)
+	valid, _ := authorise.CheckPerm(jwttoken.Token, 10)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
 
 	var products []Product
-	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price FROM products WHERE category=$1", category)
+	row, err := db.DB.Query("SELECT product_id,product_name,category,product_image,product_price FROM products WHERE category=$1", category)
 	if err != nil {
 		fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
@@ -319,10 +334,14 @@ func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductCategory, pq.Array(&prod.ProductURL), &prod.ProductPrice)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
+		}
+
+		for i, val := range prod.ProductURL {
+			prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
 		}
 		products = append(products, prod)
 	}
@@ -332,6 +351,7 @@ func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
 
 // collection/brand -> get products by brand name
 func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -352,7 +372,7 @@ func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(jwttoken.Token, 7)
+	valid, _ := authorise.CheckPerm(jwttoken.Token, 10)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -373,6 +393,9 @@ func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
 		}
+		for i, val := range prod.ProductURL {
+			prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
+		}
 		products = append(products, prod)
 	}
 
@@ -381,6 +404,7 @@ func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
 
 // new arrival --queried based on recently added products
 func NewArrival(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -394,7 +418,7 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(jwttoken.Token, 7)
+	valid, _ := authorise.CheckPerm(jwttoken.Token, 10)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -415,6 +439,9 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
 		}
+		for i, val := range prod.ProductURL {
+			prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
+		}
 		products = append(products, prod)
 	}
 
@@ -423,6 +450,7 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 
 // sales handler gives product in which the products.discounted_price field is set in db
 func Sales(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -435,7 +463,7 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(jwttoken.Token, 7)
+	valid, _ := authorise.CheckPerm(jwttoken.Token, 10)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -451,10 +479,13 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 
 	for row.Next() {
 		var prod Product
-		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductURL, &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice)
+		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
+		}
+		for i, val := range prod.ProductURL {
+			prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
 		}
 		products = append(products, prod)
 	}
@@ -471,6 +502,7 @@ type ProductByCategory struct {
 
 // get products for men and women by brands
 func ProductsForGender(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -484,7 +516,7 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(info.Token, 7)
+	valid, _ := authorise.CheckPerm(info.Token, 10)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -505,6 +537,9 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
 		}
+		for i, val := range prod.ProductURL {
+			prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
+		}
 		products = append(products, prod)
 	}
 
@@ -513,6 +548,7 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 
 // get product by product_id
 func ProductById(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -526,25 +562,29 @@ func ProductById(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var info ProductByCategory
-	err = json.NewDecoder(r.Body).Decode(&info)
+	var token Token
+	err = json.NewDecoder(r.Body).Decode(&token)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(info.Token, 7)
+	valid, _ := authorise.CheckPerm(token.Token, 10)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
+
 	var prod Product
 	err = db.DB.QueryRow("SELECT product_id,product_name,dimensions,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,glass_type,product_image,product_price,discounted_price,brand_name,brand_logo,brand_info FROM products inner join brands ON products.brand_id=brands.brand_id WHERE product_id=$1", id).Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductDimensions), &prod.FrameSize, pq.Array(&prod.FrameColor), &prod.FrameType, &prod.FrameShape, &prod.FrameMaterial, &prod.Fit, &prod.LensFeature, &prod.LensHeight, &prod.LensColor, &prod.LensMaterial, pq.Array(&prod.SuitableFaces), &prod.ProductInfo, &prod.GlassType, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.DiscountedPrice, &prod.Brand.BrandName, &prod.Brand.BrandLogo, &prod.Brand.BrandInfo)
-
 	if err != nil {
-		fmt.Println(err)
+		// fmt.Println(err)
 		http.Error(w, "Query error on products", http.StatusInternalServerError)
 		return
+	}
+
+	for i, val := range prod.ProductURL {
+		prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
 	}
 
 	json.NewEncoder(w).Encode(prod)
@@ -552,7 +592,7 @@ func ProductById(w http.ResponseWriter, r *http.Request) {
 
 // product by tag
 func ProductByTag(w http.ResponseWriter, r *http.Request) {
-
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -573,7 +613,7 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(info.Token, 7)
+	valid, _ := authorise.CheckPerm(info.Token, 10)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -593,6 +633,9 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
 			return
 		}
+		for i, val := range prod.ProductURL {
+			prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
+		}
 		products = append(products, prod)
 	}
 
@@ -602,6 +645,7 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 
 // insert brands
 func CreateBrands(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -616,14 +660,25 @@ func CreateBrands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(brandData.Token, 7)
+	valid, _ := authorise.CheckPerm(brandData.Token, 13) //permission id for deleting brands
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
 
-	err = db.DB.QueryRow("INSERT INTO brands(brand_name,brand_logo,brand_info,brand.images)", brandData.BrandName, brandData.BrandLogo, brandData.BrandInfo, pq.Array(&brandData.BrandImage)).Scan(&brandData.BrandId)
+	if len(brandData.BrandName) < 1 && len(brandData.BrandName) > 40 {
+		http.Error(w, "Len of Brand name should be atleast between 1 and 40 ", http.StatusBadRequest)
+		return
+	}
+
+	if len(brandData.BrandInfo) > 250 {
+		http.Error(w, "Brand info can contain upto 250 charactes only", http.StatusBadRequest)
+		return
+	}
+
+	err = db.DB.QueryRow("INSERT INTO brands(brand_name,brand_info) VALUES($1,$2) RETURNING brand_id", brandData.BrandName, brandData.BrandInfo).Scan(&brandData.BrandId)
 	if err != nil {
+		fmt.Println(err)
 		http.Error(w, "Error inserting brand", http.StatusInternalServerError)
 		return
 	}
@@ -632,6 +687,7 @@ func CreateBrands(w http.ResponseWriter, r *http.Request) {
 
 // update brands
 func UpdateBrands(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -646,13 +702,13 @@ func UpdateBrands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(brandData.Token, 7)
+	valid, _ := authorise.CheckPerm(brandData.Token, 15) //permission id for deleting brands
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
 
-	_, err = db.DB.Exec("UPDATE brands SET brand_name=$1,brand_logo=$2,brand_info=$3,brand_image=$4,updated_at=$5 WHERE brand_id=$6", brandData.BrandName, brandData.BrandLogo, brandData.BrandInfo, pq.Array(&brandData.BrandImage), time.Now())
+	_, err = db.DB.Exec("UPDATE brands SET brand_name=$1,brand_info=$2,updated_at=$3 WHERE brand_id=$4", brandData.BrandName, brandData.BrandInfo, time.Now(), brandData.BrandId)
 	if err != nil {
 		http.Error(w, "Error updateing brand", http.StatusInternalServerError)
 		return
@@ -660,8 +716,9 @@ func UpdateBrands(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(brandData.BrandId)
 }
 
-// delete brands
-func DeleteBrands(w http.ResponseWriter, r *http.Request) {
+// update brand logo and images
+func UpdateBrandImages(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -676,7 +733,57 @@ func DeleteBrands(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(brandData.Token, 7)
+	valid, _ := authorise.CheckPerm(brandData.Token, 15) //permission id for deleting brands
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+	match, _ := regexp.MatchString(".png$", brandData.BrandLogo)
+	if !match {
+		http.Error(w, "Only .png files are allowed", http.StatusBadRequest)
+		return
+	}
+
+	if len(brandData.BrandImage) == 0 {
+		http.Error(w, "No images", http.StatusBadRequest)
+		return
+	}
+
+	for _, val := range brandData.BrandImage {
+		match, _ := regexp.MatchString(".png$", val)
+		if !match {
+			http.Error(w, "Only .png files are allowed", http.StatusBadRequest)
+			return
+		}
+	}
+
+	_, err = db.DB.Query("UPDATE brands SET brand_logo=$1,brand_images=$2,updated_at=$3 WHERE brand_id=$4 ", brandData.BrandLogo, pq.Array(brandData.BrandImage), time.Now(), brandData.BrandId)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(w, "Error updating brand", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode("Updated successfully")
+}
+
+// delete brands
+func DeleteBrands(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var brandData Brand
+	err := json.NewDecoder(r.Body).Decode(&brandData)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(brandData.Token, 16) //permission id for deleting brands
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -684,7 +791,7 @@ func DeleteBrands(w http.ResponseWriter, r *http.Request) {
 
 	_, err = db.DB.Exec("DELETE FROM brands WHERE brand_id=$1", brandData.BrandId)
 	if err != nil {
-		http.Error(w, "Error updateing brand", http.StatusInternalServerError)
+		http.Error(w, "Error updating brand", http.StatusInternalServerError)
 		return
 	}
 	json.NewEncoder(w).Encode("Successfully deleted brand")
@@ -692,6 +799,7 @@ func DeleteBrands(w http.ResponseWriter, r *http.Request) {
 
 // insert products
 func CreateProduct(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -706,16 +814,77 @@ func CreateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(productData.Token, 7)
-
+	valid, _ := authorise.CheckPerm(productData.Token, 7) //create product perm id
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
 
-	insertQuery := `INSERT INTO products(product_name,dimensions,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,product_price,discounted_price,available_quantity,brand_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`
-	err = db.DB.QueryRow(insertQuery, productData.ProductName, pq.Array(productData.ProductDimensions), productData.FrameSize, productData.FrameColor, productData.FrameType, productData.FrameShape, productData.FrameMaterial, productData.Fit, productData.LensFeature, productData.LensHeight, productData.LensColor, productData.LensMaterial, pq.Array(&productData.SuitableFaces), productData.ProductInfo, productData.ProductPrice, productData.DiscountedPrice, productData.Brand.BrandId).Scan(&productData.ProductId)
+	if len(productData.ProductName) > 100 {
+		http.Error(w, "User name should contain atmost 100 characters", http.StatusBadRequest)
+		return
+	}
+
+	if productData.ProductCategory != "M" && productData.ProductCategory != "F" && productData.ProductCategory != "U" {
+		http.Error(w, "Use M,F or U for category", http.StatusBadRequest)
+		return
+	}
+
+	if productData.FrameSize != "S" && productData.FrameSize != "M" && productData.FrameSize != "L" && productData.FrameSize != "XL" && productData.FrameSize != "XXL" {
+		http.Error(w, "Choose proper size S,M,L,XL,XXL", http.StatusBadRequest)
+		return
+	}
+
+	if productData.FrameType != "FULL RIM" && productData.FrameType != "RIMLESS" {
+		http.Error(w, "Enter valid RIM type(FULL RIM or RIMLESS)", http.StatusBadRequest)
+		return
+	}
+
+	frameShape := []string{"SQAURE", "RECTANGLE", "PILOT", "IRREGULAR", "ROUND", "PHANTOS", "OVAL", "CAT EYE"}
+	var found bool
+	for i:= range frameShape {
+		if frameShape[i] == productData.FrameShape {
+			found=true
+			break
+		}
+	}
+	if !found{
+		http.Error(w,"Invalid Frame shape",http.StatusBadRequest)
+		return
+	}
+
+	frameMaterial:=[]string{"METAL","ACETATE","NYLON","STEEL","INJECTED","PROTIONATE","PEEK","CARBON FIBER","TITANIUM"}
+	for i:= range frameMaterial {
+		if frameMaterial[i] == productData.FrameMaterial {
+			found=true
+			break
+		}
+	}
+	if !found{
+		http.Error(w,"Invalid Frame Material",http.StatusBadRequest)
+		return
+	}
+
+	fit:=[]string{"Regular fit-Adjustable nosepads","Regular fit-High bridge fit","Narrow fit-Adjustable nosepads","Narrow fit-High bridge fit","Wide fit-Adjustable nosepads","Wide fit-High bridge fit"}
+	for i:= range fit {
+		if fit[i] == productData.Fit {
+			found=true
+			break
+		}
+	}
+	if !found{
+		http.Error(w,"Invalid Frame Material",http.StatusBadRequest)
+		return
+	}
+
+	if productData.LensFeature!="GRADIENT" && productData.LensFeature!="CLASSIC" && productData.LensFeature!="NA"{
+		http.Error(w,"Invalid lens feature",http.StatusBadRequest)
+		return
+	}
+	insertQuery := `INSERT INTO products(product_name,category,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,product_price,available_quantity,brand_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING product_id`
+	err = db.DB.QueryRow(insertQuery, productData.ProductName, productData.ProductCategory, productData.FrameSize, pq.Array(productData.FrameColor), productData.FrameType, productData.FrameShape, productData.FrameMaterial, productData.Fit, productData.LensFeature, productData.LensHeight, productData.LensColor, productData.LensMaterial, pq.Array(&productData.SuitableFaces), productData.ProductInfo, productData.ProductPrice, productData.AvailableQuantity, productData.BrandId).Scan(&productData.ProductId)
 	if err != nil {
+		fmt.Println(err)
 		http.Error(w, "Error creating product", http.StatusInternalServerError)
 		return
 	}
@@ -724,6 +893,7 @@ func CreateProduct(w http.ResponseWriter, r *http.Request) {
 
 // update images of products
 func UpdateProductImages(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -738,10 +908,26 @@ func UpdateProductImages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(productData.Token, 7)
+	valid, _ := authorise.CheckPerm(productData.Token, 11) //update-product_id=11
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
+	}
+
+	if len(productData.ProductURL) > 4 {
+		http.Error(w, "Only four picture allowed", http.StatusBadRequest)
+		return
+	}
+
+	for _, val := range productData.ProductURL {
+		match, _ := regexp.MatchString(".png$", val)
+		if len(val) > 250 {
+			http.Error(w, "Length of URL out of range", http.StatusBadRequest)
+			return
+		}
+		if !match {
+			http.Error(w, "Only .png files are allowed", http.StatusBadRequest)
+		}
 	}
 
 	updateQuery := `UPDATE products set product_image=$1 WHERE product_id=$2`
@@ -756,6 +942,7 @@ func UpdateProductImages(w http.ResponseWriter, r *http.Request) {
 
 // update product information
 func UpdateProduct(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -770,7 +957,7 @@ func UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(productData.Token, 7)
+	valid, _ := authorise.CheckPerm(productData.Token, 11)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -786,6 +973,37 @@ func UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(productData.ProductId)
 }
 
+// delete product
+func DeleteProduct(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var product_id Product
+	err := json.NewDecoder(r.Body).Decode(&product_id)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(product_id.Token, 12)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = db.DB.Exec("DELETE FROM products WHERE product_id=$1", product_id.ProductId)
+	if err != nil {
+		http.Error(w, "Error deleting role", http.StatusInternalServerError)
+		return
+	}
+	json.NewEncoder(w).Encode("Deleted role successfully")
+}
+
 type Role struct {
 	RoleID      int64   `json:"role_id,omitempty"`
 	RoleName    string  `json:"role_name,omitempty"`
@@ -795,6 +1013,7 @@ type Role struct {
 
 // create roles
 func CreateRole(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -809,7 +1028,7 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(role.Token, 7)
+	valid, _ := authorise.CheckPerm(role.Token, 1)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -825,6 +1044,7 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 
 // update role
 func UpdateRole(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -839,23 +1059,23 @@ func UpdateRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(role.Token, 7)
+	valid, _ := authorise.CheckPerm(role.Token, 1)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
 
-	err = db.DB.QueryRow("UPDATE roles set role_name=$1,permissions=$2 ", role.RoleName, pq.Array(&role.Permissions)).Scan(&role.RoleID)
+	_, err = db.DB.Exec("UPDATE roles set role_name=$1,permissions=$2 WHERE role_id=$3", role.RoleName, pq.Array(&role.Permissions), role.RoleID)
 	if err != nil {
 		http.Error(w, "Error updating role", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(role.RoleID)
-	fmt.Fprintln(w, "Updated role successfully")
+	json.NewEncoder(w).Encode("Updated role successfully")
 }
 
 // delete role
 func DeleteRole(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -870,7 +1090,7 @@ func DeleteRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(role.Token, 7)
+	valid, _ := authorise.CheckPerm(role.Token, 2)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -887,6 +1107,7 @@ func DeleteRole(w http.ResponseWriter, r *http.Request) {
 
 // get all roles
 func GetAllRoles(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -901,7 +1122,7 @@ func GetAllRoles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(token.Token, 7)
+	valid, _ := authorise.CheckPerm(token.Token, 3)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -933,6 +1154,7 @@ type Permissions struct {
 
 // create permissions
 func CreatePermission(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -947,7 +1169,7 @@ func CreatePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(permission.Token, 7)
+	valid, _ := authorise.CheckPerm(permission.Token, 4)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -963,6 +1185,7 @@ func CreatePermission(w http.ResponseWriter, r *http.Request) {
 
 // update permission name
 func UpdatePermission(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -977,7 +1200,7 @@ func UpdatePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(perm.Token, 7)
+	valid, _ := authorise.CheckPerm(perm.Token, 4)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -993,6 +1216,7 @@ func UpdatePermission(w http.ResponseWriter, r *http.Request) {
 
 // get all permissions
 func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1007,7 +1231,7 @@ func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(token.Token, 7)
+	valid, _ := authorise.CheckPerm(token.Token, 6)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -1033,6 +1257,7 @@ func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 
 // delete permission
 func DeletePermission(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1047,7 +1272,7 @@ func DeletePermission(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(perm.Token, 7)
+	valid, _ := authorise.CheckPerm(perm.Token, 5)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -1071,6 +1296,7 @@ type Tags struct {
 
 // get all tags
 func GetAllTags(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1084,7 +1310,7 @@ func GetAllTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(info.Token, 7)
+	valid, _ := authorise.CheckPerm(info.Token, 18)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -1104,6 +1330,9 @@ func GetAllTags(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error scanning tags", http.StatusInternalServerError)
 			return
 		}
+		for i, val := range t.TagImages {
+			t.TagImages[i] = "http://localhost:3000/tag_image/" + val
+		}
 		tags = append(tags, t)
 	}
 
@@ -1113,6 +1342,7 @@ func GetAllTags(w http.ResponseWriter, r *http.Request) {
 
 // create tag
 func CreateTag(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1127,7 +1357,7 @@ func CreateTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(tag.Token, 7)
+	valid, _ := authorise.CheckPerm(tag.Token, 17)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -1143,6 +1373,7 @@ func CreateTag(w http.ResponseWriter, r *http.Request) {
 
 // update tags
 func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1157,7 +1388,7 @@ func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(tagImage.Token, 7)
+	valid, _ := authorise.CheckPerm(tagImage.Token, 19)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -1173,6 +1404,7 @@ func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
 
 // update tagbinages
 func UpdateTag(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1187,7 +1419,7 @@ func UpdateTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(tag.Token, 7)
+	valid, _ := authorise.CheckPerm(tag.Token, 19)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
@@ -1203,6 +1435,7 @@ func UpdateTag(w http.ResponseWriter, r *http.Request) {
 
 // delete tag
 func DeleteTag(w http.ResponseWriter, r *http.Request) {
+	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1217,7 +1450,7 @@ func DeleteTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	//specify the permission id
-	valid, _ := authorise.CheckPerm(tag.Token, 7)
+	valid, _ := authorise.CheckPerm(tag.Token, 20)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
