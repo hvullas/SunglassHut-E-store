@@ -842,45 +842,97 @@ func CreateProduct(w http.ResponseWriter, r *http.Request) {
 
 	frameShape := []string{"SQAURE", "RECTANGLE", "PILOT", "IRREGULAR", "ROUND", "PHANTOS", "OVAL", "CAT EYE"}
 	var found bool
-	for i:= range frameShape {
+	for i := range frameShape {
 		if frameShape[i] == productData.FrameShape {
-			found=true
+			found = true
 			break
 		}
 	}
-	if !found{
-		http.Error(w,"Invalid Frame shape",http.StatusBadRequest)
+	if !found {
+		http.Error(w, "Invalid Frame shape", http.StatusBadRequest)
 		return
 	}
 
-	frameMaterial:=[]string{"METAL","ACETATE","NYLON","STEEL","INJECTED","PROTIONATE","PEEK","CARBON FIBER","TITANIUM"}
-	for i:= range frameMaterial {
+	frameMaterial := []string{"METAL", "ACETATE", "NYLON", "STEEL", "INJECTED", "PROTIONATE", "PEEK", "CARBON FIBER", "TITANIUM"}
+	for i := range frameMaterial {
 		if frameMaterial[i] == productData.FrameMaterial {
-			found=true
+			found = true
 			break
 		}
 	}
-	if !found{
-		http.Error(w,"Invalid Frame Material",http.StatusBadRequest)
+	if !found {
+		http.Error(w, "Invalid Frame Material", http.StatusBadRequest)
 		return
 	}
 
-	fit:=[]string{"Regular fit-Adjustable nosepads","Regular fit-High bridge fit","Narrow fit-Adjustable nosepads","Narrow fit-High bridge fit","Wide fit-Adjustable nosepads","Wide fit-High bridge fit"}
-	for i:= range fit {
+	fit := []string{"Regular fit-Adjustable nosepads", "Regular fit-High bridge fit", "Narrow fit-Adjustable nosepads", "Narrow fit-High bridge fit", "Wide fit-Adjustable nosepads", "Wide fit-High bridge fit"}
+	for i := range fit {
 		if fit[i] == productData.Fit {
-			found=true
+			found = true
 			break
 		}
 	}
-	if !found{
-		http.Error(w,"Invalid Frame Material",http.StatusBadRequest)
+	if !found {
+		http.Error(w, "Invalid Frame Material", http.StatusBadRequest)
 		return
 	}
 
-	if productData.LensFeature!="GRADIENT" && productData.LensFeature!="CLASSIC" && productData.LensFeature!="NA"{
-		http.Error(w,"Invalid lens feature",http.StatusBadRequest)
+	if productData.LensFeature != "GRADIENT" && productData.LensFeature != "CLASSIC" && productData.LensFeature != "NA" {
+		http.Error(w, "Invalid lens feature", http.StatusBadRequest)
 		return
 	}
+
+	if productData.LensHeight < 45 && productData.LensHeight > 65 {
+		http.Error(w, "Invalid lens height", http.StatusBadRequest)
+		return
+	}
+
+	//todo frame color
+	//todo lens color
+
+	lensMaterial := []string{"GLASS", "PLASTIC", "POLYAMIDE", "POLYCARBONATE", "NOT GLASS", "AMIDE"}
+	for i := range lensMaterial {
+		if lensMaterial[i] == productData.LensMaterial {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "Lens Material Not found", http.StatusBadRequest)
+		return
+	}
+
+	suitableFaces := []string{"ROUND", "OVAL", "HEART", "SQUARE"}
+	for i := range suitableFaces {
+		for j := range productData.SuitableFaces {
+			if suitableFaces[i] == productData.SuitableFaces[j] {
+				found = true
+				break
+			}
+		}
+	}
+	if !found {
+		http.Error(w, "Invalid suitable-face literal", http.StatusBadRequest)
+		return
+	}
+
+	if len(productData.ProductInfo) > 250 {
+		http.Error(w, "Enter product info within 250 charaters", http.StatusBadRequest)
+		return
+	}
+
+	if productData.ProductPrice <= 0 {
+		http.Error(w, "Invalid price ", http.StatusBadRequest)
+		return
+	}
+
+	if productData.AvailableQuantity <= 0 || productData.AvailableQuantity > 250 {
+		http.Error(w, "Enter proper available quantity filed", http.StatusBadRequest)
+		return
+	}
+
+	//todo authenticate brand_id
+
 	insertQuery := `INSERT INTO products(product_name,category,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,product_price,available_quantity,brand_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING product_id`
 	err = db.DB.QueryRow(insertQuery, productData.ProductName, productData.ProductCategory, productData.FrameSize, pq.Array(productData.FrameColor), productData.FrameType, productData.FrameShape, productData.FrameMaterial, productData.Fit, productData.LensFeature, productData.LensHeight, productData.LensColor, productData.LensMaterial, pq.Array(&productData.SuitableFaces), productData.ProductInfo, productData.ProductPrice, productData.AvailableQuantity, productData.BrandId).Scan(&productData.ProductId)
 	if err != nil {
@@ -920,6 +972,10 @@ func UpdateProductImages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, val := range productData.ProductURL {
+		if len(productData.ProductURL) > 4 {
+			http.Error(w, "Only four images are allowed", http.StatusBadRequest)
+			return
+		}
 		match, _ := regexp.MatchString(".png$", val)
 		if len(val) > 250 {
 			http.Error(w, "Length of URL out of range", http.StatusBadRequest)
@@ -940,6 +996,7 @@ func UpdateProductImages(w http.ResponseWriter, r *http.Request) {
 	fmt.Sprintln(w, "Updated Successfully")
 }
 
+// todo generic update
 // update product information
 func UpdateProduct(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -1005,10 +1062,9 @@ func DeleteProduct(w http.ResponseWriter, r *http.Request) {
 }
 
 type Role struct {
-	RoleID      int64   `json:"role_id,omitempty"`
-	RoleName    string  `json:"role_name,omitempty"`
-	Permissions []int64 `json:"permissions,omitempty"`
-	Token       string  `json:"token"`
+	RoleID   int64  `json:"role_id,omitempty"`
+	RoleName string `json:"role_name,omitempty"`
+	Token    string `json:"token,omitempty"`
 }
 
 // create roles
@@ -1034,19 +1090,19 @@ func CreateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("INSERT INTO roles(role_name,permissions) VALUES($1,$2)", role.RoleName, pq.Array(&role.Permissions)).Scan(&role.RoleID)
+	err = db.DB.QueryRow("INSERT INTO roles(role_name) VALUES($1) RETURNING role_id", role.RoleName).Scan(&role.RoleID)
 	if err != nil {
 		http.Error(w, "Error creating role", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(role.RoleID)
+	json.NewEncoder(w).Encode(role)
 }
 
 // update role
 func UpdateRole(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1065,7 +1121,7 @@ func UpdateRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.DB.Exec("UPDATE roles set role_name=$1,permissions=$2 WHERE role_id=$3", role.RoleName, pq.Array(&role.Permissions), role.RoleID)
+	_, err = db.DB.Exec("UPDATE roles set role_name=$1 WHERE role_id=$2", role.RoleName, role.RoleID)
 	if err != nil {
 		http.Error(w, "Error updating role", http.StatusInternalServerError)
 		return
@@ -1077,7 +1133,7 @@ func UpdateRole(w http.ResponseWriter, r *http.Request) {
 func DeleteRole(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1101,7 +1157,6 @@ func DeleteRole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error deleting role", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(role.RoleID)
 	fmt.Fprintln(w, "Deleted role successfully")
 }
 
@@ -1109,13 +1164,13 @@ func DeleteRole(w http.ResponseWriter, r *http.Request) {
 func GetAllRoles(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var token Token
 	var roles []Role
-	err := json.NewDecoder(r.Body).Decode(&token.Token)
+	err := json.NewDecoder(r.Body).Decode(&token)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
 		return
@@ -1128,14 +1183,14 @@ func GetAllRoles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	row, err := db.DB.Query("SELECT role_id,role_name,permissions FROM roles")
+	row, err := db.DB.Query("SELECT role_id,role_name FROM roles")
 	if err != nil {
 		http.Error(w, "Error getting roles", http.StatusInternalServerError)
 		return
 	}
 	for row.Next() {
 		var r Role
-		err = row.Scan(&r.RoleID, &r.RoleName, pq.Array(&r.Permissions))
+		err = row.Scan(&r.RoleID, &r.RoleName)
 		if err != nil {
 			http.Error(w, "Scan error on roles", http.StatusInternalServerError)
 			return
@@ -1143,11 +1198,10 @@ func GetAllRoles(w http.ResponseWriter, r *http.Request) {
 		roles = append(roles, r)
 	}
 	json.NewEncoder(w).Encode(roles)
-	fmt.Fprintln(w, "Updated role successfully")
 }
 
 type Permissions struct {
-	PermissionId   int64  `json:"permissionId,omitempty"`
+	PermissionId   int64  `json:"permission_id,omitempty"`
 	PermissionName string `json:"permission_name,omitempty"`
 	Token          string `json:"token,omitempty"`
 }
@@ -1175,19 +1229,20 @@ func CreatePermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("INSERT INTO permissions(permission_name) VALUES($1)", permission.PermissionName).Scan(&permission.PermissionId)
+	err = db.DB.QueryRow("INSERT INTO permissions(permission_name) VALUES($1) RETURNING permission_id", permission.PermissionName).Scan(&permission.PermissionId)
 	if err != nil {
 		http.Error(w, "Error creating permission", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(permission.PermissionId)
+	permission.Token = ""
+	json.NewEncoder(w).Encode(permission)
 }
 
 // update permission name
 func UpdatePermission(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1206,25 +1261,31 @@ func UpdatePermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.DB.Exec("UPDATE permissions SET permission_name=$1 WHERE permission_id=$2)", perm.PermissionName, perm.PermissionId)
+	if len(perm.PermissionName) > 100 {
+		http.Error(w, "Permission name too long (max 100 chars)", http.StatusBadRequest)
+		return
+	}
+
+	_, err = db.DB.Query("UPDATE permissions SET permission_name=$1,updated_at=$2 WHERE permission_id=$3", perm.PermissionName, time.Now(), perm.PermissionId)
 	if err != nil {
+		fmt.Println(err)
 		http.Error(w, "Error updating permission", http.StatusInternalServerError)
 		return
 	}
-	json.NewEncoder(w).Encode(perm)
+	json.NewEncoder(w).Encode("Updated successfully")
 }
 
 // get all permissions
 func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 	var token Token
 	var perms []Permissions
-	err := json.NewDecoder(r.Body).Decode(&token.Token)
+	err := json.NewDecoder(r.Body).Decode(&token)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
 		return
@@ -1259,7 +1320,7 @@ func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 func DeletePermission(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1363,7 +1424,12 @@ func CreateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("INSERT INTO tags(tag_name) VALUES($1)", tag.TagName).Scan(&tag.TagId)
+	if len(tag.TagName) > 100 {
+		http.Error(w, "Tag name can have upto 100 characters only", http.StatusBadRequest)
+		return
+	}
+
+	err = db.DB.QueryRow("INSERT INTO tags(tag_name) VALUES($1) RETURNING tag_id", tag.TagName).Scan(&tag.TagId)
 	if err != nil {
 		http.Error(w, "Error creating tags", http.StatusInternalServerError)
 		return
@@ -1375,7 +1441,7 @@ func CreateTag(w http.ResponseWriter, r *http.Request) {
 func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1394,8 +1460,29 @@ func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("UPDATE tags SET tag_image_url=$1", tagImage.TagImages).Scan(pq.Array(&tagImage.TagImages))
+	if len(tagImage.TagImages) > 4 {
+		http.Error(w, "Only four images are allowed", http.StatusBadRequest)
+		return
+	}
+	for i := range tagImage.TagImages {
+		if len(tagImage.TagImages[i]) > 250 {
+			http.Error(w, "URL very long to accomadate(max 250 char)", http.StatusBadRequest)
+			return
+		}
+		match, _ := regexp.MatchString(".png$", tagImage.TagImages[i])
+		if !match {
+			http.Error(w, "Only .png files are allowed", http.StatusBadRequest)
+			return
+		}
+
+	}
+
+	err = db.DB.QueryRow("UPDATE tags SET tag_image_url=$1 WHERE tag_id=$2 RETURNING tag_id", pq.Array(tagImage.TagImages), tagImage.TagId).Scan(&tagImage.TagId)
 	if err != nil {
+		if err == sql.ErrNoRows {
+			http.Error(w, "Invalid tag_id", http.StatusBadRequest)
+			return
+		}
 		http.Error(w, "Error updating tag image", http.StatusInternalServerError)
 		return
 	}
@@ -1406,7 +1493,7 @@ func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
 func UpdateTag(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1425,7 +1512,7 @@ func UpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("UPDATE tags SET tag_name=$1", tag.TagName).Scan(&tag.TagId)
+	_, err = db.DB.Exec("UPDATE tags SET tag_name=$1 WHERE tag_id=$2", tag.TagName, tag.TagId)
 	if err != nil {
 		http.Error(w, "Error updating tag", http.StatusInternalServerError)
 		return
@@ -1437,7 +1524,7 @@ func UpdateTag(w http.ResponseWriter, r *http.Request) {
 func DeleteTag(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodDelete {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1456,7 +1543,7 @@ func DeleteTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.DB.Exec("DELETE FROM tags WHERE SET tag_id=$1", tag.TagId)
+	_, err = db.DB.Exec("DELETE FROM tags WHERE tag_id=$1", tag.TagId)
 	if err != nil {
 		http.Error(w, "Error deleting tag", http.StatusInternalServerError)
 		return
@@ -1466,4 +1553,280 @@ func DeleteTag(w http.ResponseWriter, r *http.Request) {
 
 //create handler for updating only the price and dicounted_price columns of products
 
-//
+type UserRole struct {
+	UserId int64  `json:"user_id"`
+	RoleId int64  `json:"role_id,omitempty"`
+	Token  string `json:"token"`
+}
+
+// create user-role
+func CreateUserRole(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var userRole UserRole
+	err := json.NewDecoder(r.Body).Decode(&userRole)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(userRole.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+	var id int64
+	err = db.DB.QueryRow("INSERT INTO user_role(user_id,role_id) VALUES($1,$2) RETURNING user_id ", userRole.UserId, userRole.RoleId).Scan(&id)
+	if err != nil {
+		http.Error(w, "Error creating user-role", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode("Created role for user successfully")
+
+}
+
+// delete user-role
+func DeleteUserRole(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var userRole UserRole
+	err := json.NewDecoder(r.Body).Decode(&userRole)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(userRole.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = db.DB.Exec("DELETE FROM user_role WHERE user_id=$1 AND role_id=$2", userRole.UserId, userRole.RoleId)
+	if err != nil {
+		http.Error(w, "Error deleting user-role", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode("Deleted role for the user successfully")
+
+}
+
+type AssignedRolesOfUser struct {
+	UserId  int64   `json:"user_id"`
+	RolesId []int64 `json:"roles"`
+}
+
+// get all roles of a user querying user-role table
+func GetUserRole(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var userRole UserRole
+	err := json.NewDecoder(r.Body).Decode(&userRole)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(userRole.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	row, err := db.DB.Query("SELECT role_id FROM user_role WHERE user_id=$1", userRole.UserId)
+	if err != nil {
+		http.Error(w, "Error creating user-role", http.StatusInternalServerError)
+		return
+	}
+	var assignedRoles AssignedRolesOfUser
+	assignedRoles.UserId = userRole.UserId
+	for row.Next() {
+		var assignedRole int64
+		err = row.Scan(&assignedRole)
+		if err != nil {
+			http.Error(w, "Error scan on user_role", http.StatusInternalServerError)
+			return
+		}
+		assignedRoles.RolesId = append(assignedRoles.RolesId, assignedRole)
+	}
+
+	json.NewEncoder(w).Encode(assignedRoles)
+
+}
+
+type RolePerm struct {
+	RoleId int64  `json:"role_id"`
+	PermId int64  `json:"perm_id,omitempty"`
+	Token  string `json:"token"`
+}
+
+func CreateRolePerm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var rolePerm RolePerm
+	err := json.NewDecoder(r.Body).Decode(&rolePerm)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(rolePerm.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+	id := 0
+	err = db.DB.QueryRow("INSERT INTO role_perm(role_id,perm_id) VALUES($1,$2) RETURNING role_id ", rolePerm.RoleId, rolePerm.PermId).Scan(&id)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(w, "Error creating role-perm", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode("Created role-perm successfully")
+
+}
+
+// delete user-role
+func DeleteRolePerm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodDelete {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var rolePerm RolePerm
+	err := json.NewDecoder(r.Body).Decode(&rolePerm)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(rolePerm.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = db.DB.Exec("DELETE FROM role_perm WHERE role_id=$1 AND perm_id=$2", rolePerm.RoleId, rolePerm.PermId)
+	if err != nil {
+		http.Error(w, "Error deleting role-perm", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode("deleted perm for the role successfully")
+
+}
+
+type AssignedPermForRole struct {
+	RoleId int64   `json:"role_id"`
+	PermId []int64 `json:"permission_ids"`
+}
+
+// get all roles of a user querying user-role table
+func GetrolePerm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var rolePerm RolePerm
+	err := json.NewDecoder(r.Body).Decode(&rolePerm)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(rolePerm.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	row, err := db.DB.Query("SELECT perm_id FROM role_perm WHERE role_id=$1", rolePerm.RoleId)
+	if err != nil {
+		http.Error(w, "Query error on user-role perm", http.StatusInternalServerError)
+		return
+	}
+	var assignedPerms AssignedPermForRole
+	for row.Next() {
+		var assignedPerm int64
+		err = row.Scan(&assignedPerm)
+		if err != nil {
+			http.Error(w, "Error scan on perm-role", http.StatusInternalServerError)
+			return
+		}
+		assignedPerms.PermId = append(assignedPerms.PermId, assignedPerm)
+	}
+
+	assignedPerms.RoleId=rolePerm.RoleId
+	json.NewEncoder(w).Encode(assignedPerms)
+}
+
+//get all roles and their permissions
+func GetAllrolePerm(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var rolePerm RolePerm
+	err := json.NewDecoder(r.Body).Decode(&rolePerm)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(rolePerm.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	row, err := db.DB.Query("SELECT perm_id FROM role_perm", rolePerm.RoleId)
+	if err != nil {
+		http.Error(w, "Query error on user-role perm", http.StatusInternalServerError)
+		return
+	}
+	var assignedPerms AssignedPermForRole
+	for row.Next() {
+		var assignedPerm int64
+		err = row.Scan(&assignedPerm)
+		if err != nil {
+			http.Error(w, "Error scan on perm-role", http.StatusInternalServerError)
+			return
+		}
+		assignedPerms.PermId = append(assignedPerms.PermId, assignedPerm)
+	}
+
+	assignedPerms.RoleId=rolePerm.RoleId
+	json.NewEncoder(w).Encode(assignedPerms)
+}
+
