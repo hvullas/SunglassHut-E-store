@@ -10,13 +10,29 @@ import (
 
 func CheckRolePerm(role, perm int64) (error, bool) {
 	var authorised bool
-	err := db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM role_perm WHERE role_id=$1 AND perm_id=$2)", role, perm).Scan(&authorised)
+
+	exists, err := db.RedisClient.SIsMember(fmt.Sprint(role), perm).Result()
 	if err != nil {
-		return err, false
+		panic(err)
 	}
-	if !authorised {
-		return fmt.Errorf("permission doesn't exists for the role"), false
+	if exists {
+		fmt.Println("Authorised using redis")
+		return nil, true
 	}
+	if !exists {
+
+		fmt.Println("Querying postgres db")
+
+		err = db.DB.QueryRow("SELECT EXISTS(SELECT 1 FROM role_perm WHERE role_id=$1 AND perm_id=$2)", role, perm).Scan(&authorised)
+		if err != nil {
+			return err, false
+		}
+		if !authorised {
+			return fmt.Errorf("permission doesn't exists for the role"), false
+		}
+
+	}
+	go InsertToRedis(role)
 	return nil, true
 }
 
@@ -58,4 +74,19 @@ func CheckPerm(tokenStr string, perm int64) (bool, error) {
 		}
 	}
 	return false, fmt.Errorf("Unauthorised")
+}
+
+func InsertToRedis(role int64) {
+	row, err := db.DB.Query("SELECT perm_id FROM role_perm WHERE role_id=$1", role)
+	if err != nil {
+		panic(err)
+	}
+	for row.Next() {
+		var perm int64
+		row.Scan(&perm)
+		if err = db.RedisClient.SAdd(fmt.Sprint(role), perm).Err(); err != nil {
+			panic(err)
+		}
+	}
+
 }
