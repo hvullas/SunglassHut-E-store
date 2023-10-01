@@ -4,6 +4,7 @@ import (
 	"backend/authorise"
 	"backend/db"
 	"backend/token"
+	"crypto/internal/edwards25519/field"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -1784,11 +1785,11 @@ func GetrolePerm(w http.ResponseWriter, r *http.Request) {
 		assignedPerms.PermId = append(assignedPerms.PermId, assignedPerm)
 	}
 
-	assignedPerms.RoleId=rolePerm.RoleId
+	assignedPerms.RoleId = rolePerm.RoleId
 	json.NewEncoder(w).Encode(assignedPerms)
 }
 
-//get all roles and their permissions
+// get all roles and their permissions
 func GetAllrolePerm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodGet {
@@ -1826,7 +1827,374 @@ func GetAllrolePerm(w http.ResponseWriter, r *http.Request) {
 		assignedPerms.PermId = append(assignedPerms.PermId, assignedPerm)
 	}
 
-	assignedPerms.RoleId=rolePerm.RoleId
+	assignedPerms.RoleId = rolePerm.RoleId
 	json.NewEncoder(w).Encode(assignedPerms)
 }
 
+// to read input
+type Item struct {
+	Quantity int64   `json:"quantity"`
+	Price    float64 `json:"price"`
+	Total    float64 `json:"total"`
+}
+
+type ItemMap map[string]Item
+
+type RequestBody struct {
+	Token     string  `json:"token"`
+	UserId    int64   `json:"user_id"`
+	Items     ItemMap `json:"items"`
+	ProductId string  `json:"product_id"`
+}
+
+// cart is created at user creation time
+func AddItemstoCart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body RequestBody
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	query := "SELECT items FROM cart WHERE cart_id=$1"
+
+	var jsonData []byte
+	if err := db.DB.QueryRow(query, body.UserId).Scan(&jsonData); err != nil {
+		log.Fatal(err)
+	}
+	var data ItemMap
+	if err := json.Unmarshal(jsonData, &data); err != nil {
+		log.Fatal(err)
+	}
+
+	for k, v := range body.Items {
+		data[k] = v
+	}
+
+	jsonItems, err := json.Marshal(data)
+	if err != nil {
+		panic(err)
+	}
+
+	err = db.DB.QueryRow("UPDATE cart SET items=$1,updated_at=now() WHERE cart_id=$2 RETURNING cart_id", string(jsonItems), body.UserId).Scan(&body.UserId)
+	if err != nil {
+		panic(err)
+	}
+
+	json.NewEncoder(w).Encode(body.UserId)
+
+}
+
+type UpdateCart struct {
+	Token     string `json:"token"`
+	UserId    int64  `json:"user_id"`
+	ProductId int64  `json:"product_id"`
+	Item      Item   `json:"item"`
+}
+
+// update cart items
+func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body UpdateCart
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	jsonItems, err := json.Marshal(body.Item)
+	if err != nil {
+		panic(err)
+	}
+
+	_, err = db.DB.Query("UPDATE cart SET items =jsonb_set(items,'{$1}',$1) WHERE items ? $2", fmt.Sprint(body.ProductId), string(jsonItems), body.ProductId)
+	if err != nil {
+		panic(err)
+
+	}
+
+	json.NewEncoder(w).Encode("Updated successfully")
+
+}
+
+// delete item from cart
+func DeleteItemsInCart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body UpdateCart
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	_, err = db.DB.Query("UPDATE cart SET items =items-$1 WHERE cart_id=$2 ", body.ProductId, body)
+	if err != nil {
+		panic(err)
+
+	}
+
+	json.NewEncoder(w).Encode("Updated successfully")
+
+}
+
+type Cart struct {
+	Items    ItemMap `json:"item"`
+	CheckOut bool    `json:"checked_out"`
+}
+
+// getall items in cart
+func ItemsInCart(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body RequestBody
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	var data []byte
+	var response Cart
+
+	err = db.DB.QueryRow("SELECT items,checked_out FROM cart WHERE cart_id=$1", body.UserId).Scan(&data, &response.CheckOut)
+	if err != nil {
+		panic(err)
+
+	}
+
+	if err := json.Unmarshal(data, &response.Items); err != nil {
+		log.Fatal(err)
+	}
+
+	json.NewEncoder(w).Encode(response)
+
+}
+
+type Address struct {
+	AddressId   int64  `json:"address_id"`
+	UserId      int64  `json:"user_id"`
+	AddressName string `json:"address_name"`
+	AddressInfo string `json:"address_info"`
+	City        string `json:"city"`
+	PostalCode  string `json:"postal_code"`
+	Country     string `json:"country"`
+	Token       string `json:"token"`
+}
+
+// add adress
+func AddAdress(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body Address
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+	err = db.DB.QueryRow("INSERT INTO address(user_id,adress_name,address_info,city,postal_code,country) VALUES($1,$2,$3,$4,$5,$6) RETURNING address_id", body.UserId, body.AddressName, body.AddressInfo, body.City, body.City, body.PostalCode, body.Country).Scan(&body.AddressId)
+	if err != nil {
+		http.Error(w, "Error inserting address", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(body.AddressId)
+}
+
+func DeleteAdress(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body Address
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+	_, err = db.DB.Query("DELETE FROM address WHERE address_id=$1", body.AddressId)
+	if err != nil {
+		http.Error(w, "Error deleting address", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode("Address deleted successfully")
+}
+
+// update address
+func UpdateAdress(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body Address
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+	_, err = db.DB.Query("UPDATE address SET adress_name=$1,address_info=$2,city=$3,postal_code=$4,country=&5 WHERE address_id=$6", body.AddressName, body.AddressInfo, body.City, body.PostalCode, body.Country, body.AddressId)
+	if err != nil {
+		http.Error(w, "Error deleting address", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode("Address updated successfully")
+}
+
+type Order struct {
+	OrderId      int64   `json:"order"`
+	User_id      int64   `json:"user_id"`
+	PaymentRefId string  `json:"payment_ref_id"`
+	ShipAddress  int64   `json:"shipment_address"`
+	ItemDetails  ItemMap `json:"item_details"`
+	Token        string  `json:"token"`
+}
+
+// create order
+func CreateOrder(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body Order
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	err = db.DB.QueryRow("INSERT INTO orders(user_id,item_details,order_status) VALUES($1,$2,$3) RETURNING order_id").Scan(&body.OrderId)
+	if err!=nil{
+		http.Error(w,"Error creating order",http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(body.OrderId)
+
+}
+
+
+//update order
+func UpdateOrder(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body Order
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+	var query string
+
+	if body.PaymentRefId!=""{
+		query="UPDATE orders SET "
+	}
+	if body.ShipAddress!=0{
+		query="UPDATE orders SET shipment_address_id=$1"
+	}
+	err = db.DB.QueryRow().Scan(&body.OrderId)
+	if err!=nil{
+		http.Error(w,"Error creating order",http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode(body.OrderId)
+
+}
