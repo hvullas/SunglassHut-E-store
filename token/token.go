@@ -36,4 +36,4 @@ func GenrateToken(claims *JwtClaims, expirationTime time.Time) (string, error) {
 		return "", err
 	}
 	return tokenString, nil
-}
+}//UPDATE cart SET items=jsonb_set(items,'{$1}','$2'::jsonb) WHERE cart_id=$3 RETURNING cart_id", fmt.Sprint(body.ProductId), string(jsonItems), body.UserId).Scan(body.UserId)

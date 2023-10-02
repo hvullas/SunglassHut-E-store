@@ -2189,7 +2189,7 @@ func UpdateOrder(w http.ResponseWriter, r *http.Request) {
 	if body.ShipAddress!=0{
 		query="UPDATE orders SET shipment_address_id=$1"
 	}
-	err = db.DB.QueryRow().Scan(&body.OrderId)
+	err = db.DB.QueryRow(query).Scan(&body.OrderId)
 	if err!=nil{
 		http.Error(w,"Error creating order",http.StatusInternalServerError)
 		return

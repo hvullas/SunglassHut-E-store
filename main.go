@@ -11,10 +11,8 @@ import (
 
 func main() {
 
-	// db.ConnectRedis()
-
-	// pong, err := db.RedisClient.Ping().Result()
-	// fmt.Println(pong, err)
+	db.ConnectRedis()
+	defer db.RedisClient.Close()
 
 	db.ConnectDB()
 	defer db.DB.Close()
@@ -92,6 +90,15 @@ func main() {
 	http.HandleFunc("/delete-role-perm", handlers.DeleteRolePerm) //delete perm Assigned to the role in role_perm table
 
 	http.HandleFunc("/get-role-perms", handlers.GetrolePerm) //get all the perms assigned to the role in role_perm table
+
+	//building orders api
+	http.HandleFunc("/cart/add-items", handlers.AddItemstoCart)
+
+	http.HandleFunc("/cart/update-item", handlers.UpdateItemsInCart)
+
+	http.HandleFunc("/cart/delete-item", handlers.DeleteItemsInCart)
+
+	http.HandleFunc("/cart/items", handlers.ItemsInCart)
 
 	http.ListenAndServe(":3000", nil)
 
