@@ -4,7 +4,6 @@ import (
 	"backend/authorise"
 	"backend/db"
 	"backend/token"
-	"crypto/internal/edwards25519/field"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -1905,7 +1904,7 @@ type UpdateCart struct {
 	Item      Item   `json:"item"`
 }
 
-// update cart items
+// update cart items -only quantity,price and totalprice of the item are implemented
 func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -1932,7 +1931,7 @@ func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
 		panic(err)
 	}
 
-	_, err = db.DB.Query("UPDATE cart SET items =jsonb_set(items,'{$1}',$1) WHERE items ? $2", fmt.Sprint(body.ProductId), string(jsonItems), body.ProductId)
+	_, err = db.DB.Query("UPDATE cart SET items =jsonb_set(items,'{$1}',$2) WHERE items ? $3", fmt.Sprint(body.ProductId), string(jsonItems), body.ProductId)
 	if err != nil {
 		panic(err)
 
@@ -1942,7 +1941,7 @@ func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
 
 }
 
-// delete item from cart
+// delete item from cart //possibly used when quantity becomes zero
 func DeleteItemsInCart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -1975,8 +1974,12 @@ func DeleteItemsInCart(w http.ResponseWriter, r *http.Request) {
 }
 
 type Cart struct {
-	Items    ItemMap `json:"item"`
-	CheckOut bool    `json:"checked_out"`
+	ProductId    int      `json:"product_id"`
+	Product_name string   `json:"name"`
+	ProductImage []string `json:"images"`
+	Price        float64  `json:"price"`
+	Size         int      `json:"size"`
+	CheckOut     bool     `json:"checked_out"`
 }
 
 // getall items in cart
@@ -2002,16 +2005,37 @@ func ItemsInCart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var data []byte
-	var response Cart
+	var response []Cart
+	var items ItemMap
 
-	err = db.DB.QueryRow("SELECT items,checked_out FROM cart WHERE cart_id=$1", body.UserId).Scan(&data, &response.CheckOut)
+	var checkout bool
+	err = db.DB.QueryRow("SELECT items,checked_out FROM cart WHERE cart_id=$1", body.UserId).Scan(&data, &checkout)
 	if err != nil {
 		panic(err)
 
 	}
 
-	if err := json.Unmarshal(data, &response.Items); err != nil {
+	if err := json.Unmarshal(data, &items); err != nil {
 		log.Fatal(err)
+	}
+
+	var idArray []int
+	for productId := range items {
+		id, _ := strconv.Atoi(productId)
+		idArray = append(idArray, id)
+	}
+	row, err := db.DB.Query("SELECT product_name,product_image,product_price,frame_size FROM products WHERE product_id=ANY($1)", idArray)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	for row.Next() {
+		var x Cart
+		err = row.Scan(&x.Product_name, &x.ProductImage, &x.Price, &x.Size)
+		if err != nil {
+			log.Fatal(err)
+		}
+		response = append(response, x)
 	}
 
 	json.NewEncoder(w).Encode(response)
@@ -2044,6 +2068,8 @@ func AddAdress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//todo input validation
+
 	//specify the permission id
 	valid, _ := authorise.CheckPerm(body.Token, 20)
 	if !valid {
@@ -2059,7 +2085,7 @@ func AddAdress(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(body.AddressId)
 }
 
-func DeleteAdress(w http.ResponseWriter, r *http.Request) {
+func DeleteAddress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2103,6 +2129,8 @@ func UpdateAdress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	//todo input validation
+
 	//specify the permission id
 	valid, _ := authorise.CheckPerm(body.Token, 20)
 	if !valid {
@@ -2117,6 +2145,51 @@ func UpdateAdress(w http.ResponseWriter, r *http.Request) {
 
 	json.NewEncoder(w).Encode("Address updated successfully")
 }
+
+//get addresses of user
+func GetAllAddress(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body Address
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//todo input validation
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	var response []Address
+	row, err := db.DB.Query("SELECT address_id,address_name,address_info,city,postal_code,country FROM address WHERE user_id=$1",body.UserId)
+	if err != nil {
+		http.Error(w, "Error Querying address", http.StatusInternalServerError)
+		return
+	}
+
+	for row.Next(){
+		var x Address
+		err=row.Scan(&x.AddressId,&x.AddressName,&x.AddressInfo,&x.City,&x.PostalCode,&x.Country)
+		if err!=nil{
+			log.Fatal(err)
+		}
+		response = append(response, x)
+	}
+
+
+	json.NewEncoder(w).Encode(response)
+}
+
 
 type Order struct {
 	OrderId      int64   `json:"order"`
@@ -2149,9 +2222,11 @@ func CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("INSERT INTO orders(user_id,item_details,order_status) VALUES($1,$2,$3) RETURNING order_id").Scan(&body.OrderId)
-	if err!=nil{
-		http.Error(w,"Error creating order",http.StatusInternalServerError)
+	itemjson, err := json.Marshal(body.ItemDetails)
+
+	err = db.DB.QueryRow("INSERT INTO orders(user_id,item_details,order_status) VALUES($1,$2,$3) RETURNING order_id", body.User_id, string(itemjson), "Payment-pending").Scan(&body.OrderId)
+	if err != nil {
+		http.Error(w, "Error creating order", http.StatusInternalServerError)
 		return
 	}
 
@@ -2159,9 +2234,8 @@ func CreateOrder(w http.ResponseWriter, r *http.Request) {
 
 }
 
-
-//update order
-func UpdateOrder(w http.ResponseWriter, r *http.Request) {
+// update order //this handler only updates address for the shipment
+func UpdatePaymentRefId(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -2181,20 +2255,46 @@ func UpdateOrder(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
-	var query string
 
-	if body.PaymentRefId!=""{
-		query="UPDATE orders SET "
-	}
-	if body.ShipAddress!=0{
-		query="UPDATE orders SET shipment_address_id=$1"
-	}
-	err = db.DB.QueryRow(query).Scan(&body.OrderId)
-	if err!=nil{
-		http.Error(w,"Error creating order",http.StatusInternalServerError)
+	err = db.DB.QueryRow("UPDATE orders SET payment_ref_id=$1,order_status='Order-Placed' WHERE order_id=$2 AND shipment_address IS NOT NULL RETURNING order_id",body.PaymentRefId,body.OrderId).Scan(&body.OrderId)
+	if err != nil {
+		http.Error(w, "Error updating payment_ref_id", http.StatusInternalServerError)
 		return
 	}
 
-	json.NewEncoder(w).Encode(body.OrderId)
+	json.NewEncoder(w).Encode("Payment Successful")
 
 }
+
+func UpdateShipmentAddress(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var body Order
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	err = db.DB.QueryRow("UPDATE orders SET shipment_address_id=$1 WHERE order_id=$2 RETURNING order_id",body.ShipAddress,body.OrderId).Scan(&body.OrderId)
+	if err != nil {
+		http.Error(w, "Error creating order", http.StatusInternalServerError)
+		return
+	}
+
+	json.NewEncoder(w).Encode("Address added successfully")
+
+}
+
+
