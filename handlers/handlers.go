@@ -643,6 +643,63 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func SortOnPrice(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	slug := path.Base(r.URL.Path)
+	var condition string
+
+	if slug == "" {
+		http.Error(w, "Invalid request", http.StatusBadRequest)
+		return
+	}
+	if slug == "high-to-low" {
+		condition = "DESC"
+	}
+
+	var body Order
+	err := json.NewDecoder(r.Body).Decode(&body)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(body.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	var products []Product
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price,category FROM products ORDER BY price $1", condition)
+	if err != nil {
+		fmt.Println(err)
+		http.Error(w, "Query error on products", http.StatusInternalServerError)
+		return
+	}
+
+	for row.Next() {
+		var prod Product
+		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
+		if err != nil {
+			http.Error(w, "Scan error on products", http.StatusInternalServerError)
+			return
+		}
+		for i, val := range prod.ProductURL {
+			prod.ProductURL[i] = "http://localhost:3000/product_images/" + val
+		}
+		products = append(products, prod)
+	}
+
+	json.NewEncoder(w).Encode(products)
+
+}
+
 // insert brands
 func CreateBrands(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -1847,7 +1904,7 @@ type RequestBody struct {
 }
 
 // cart is created at user creation time
-func AddItemstoCart(w http.ResponseWriter, r *http.Request) {
+func AddItemstoCart(w http.ResponseWriter, r *http.Request) { //todo
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
@@ -1925,13 +1982,23 @@ func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
+	if body.UserId <= 0 || body.ProductId <= 0 {
+		http.Error(w, "Missing user_id or product_id", http.StatusBadRequest)
+		return
+	}
+
+	if body.Item.Price <= 0 || body.Item.Quantity <= 0 || body.Item.Total != 2*body.Item.Total {
+		http.Error(w, "Invalid item details", http.StatusBadRequest)
+		return
+	}
 
 	jsonItems, err := json.Marshal(body.Item)
 	if err != nil {
 		panic(err)
 	}
 
-	_, err = db.DB.Query("UPDATE cart SET items =jsonb_set(items,'{$1}',$2) WHERE items ? $3", fmt.Sprint(body.ProductId), string(jsonItems), body.ProductId)
+	key := "{" + fmt.Sprint(body.ProductId) + "}"
+	_, err = db.DB.Query("UPDATE cart SET items =jsonb_set(items,$1,$2) WHERE items ? $3 cart_id=$4", key, string(jsonItems), body.ProductId, body.UserId)
 	if err != nil {
 		panic(err)
 
@@ -1944,7 +2011,7 @@ func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
 // delete item from cart //possibly used when quantity becomes zero
 func DeleteItemsInCart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -1963,7 +2030,7 @@ func DeleteItemsInCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = db.DB.Query("UPDATE cart SET items =items-$1 WHERE cart_id=$2 ", body.ProductId, body)
+	_, err = db.DB.Query("UPDATE cart SET items =items-$1 WHERE cart_id=$2 ", body.ProductId, body.UserId)
 	if err != nil {
 		panic(err)
 
@@ -1978,7 +2045,7 @@ type Cart struct {
 	Product_name string   `json:"name"`
 	ProductImage []string `json:"images"`
 	Price        float64  `json:"price"`
-	Size         int      `json:"size"`
+	Size         string   `json:"size"`
 	CheckOut     bool     `json:"checked_out"`
 }
 
@@ -2024,14 +2091,14 @@ func ItemsInCart(w http.ResponseWriter, r *http.Request) {
 		id, _ := strconv.Atoi(productId)
 		idArray = append(idArray, id)
 	}
-	row, err := db.DB.Query("SELECT product_name,product_image,product_price,frame_size FROM products WHERE product_id=ANY($1)", idArray)
+	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,frame_size FROM products WHERE product_id=ANY($1)", pq.Array(idArray))
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	for row.Next() {
 		var x Cart
-		err = row.Scan(&x.Product_name, &x.ProductImage, &x.Price, &x.Size)
+		err = row.Scan(&x.ProductId, &x.Product_name, pq.Array(&x.ProductImage), &x.Price, &x.Size)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -2068,15 +2135,49 @@ func AddAdress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	//todo input validation
-
 	//specify the permission id
 	valid, _ := authorise.CheckPerm(body.Token, 20)
 	if !valid {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
-	err = db.DB.QueryRow("INSERT INTO address(user_id,adress_name,address_info,city,postal_code,country) VALUES($1,$2,$3,$4,$5,$6) RETURNING address_id", body.UserId, body.AddressName, body.AddressInfo, body.City, body.City, body.PostalCode, body.Country).Scan(&body.AddressId)
+
+	if body.UserId <= 0 {
+		http.Error(w, "Invalid user id", http.StatusBadRequest)
+		return
+	}
+
+	if len(body.AddressName) <= 0 || len(body.AddressName) > 20 {
+		http.Error(w, "Invalid address name", http.StatusBadRequest)
+		return
+	}
+
+	if len(body.AddressInfo) <= 0 || len(body.AddressInfo) > 100 {
+		http.Error(w, "Invalid address info", http.StatusBadRequest)
+		return
+	}
+
+	if len(body.City) <= 0 || len(body.City) > 50 {
+		http.Error(w, "Invalid city name", http.StatusBadRequest)
+		return
+	}
+
+	match, _ := regexp.MatchString(`\d{6}`, body.PostalCode)
+	if !match {
+		http.Error(w, "Invalid postal code", http.StatusBadRequest)
+		return
+	}
+	if len(body.PostalCode) != 6 {
+		http.Error(w, "Invalid postal code", http.StatusBadRequest)
+		return
+	}
+
+	if len(body.Country) <= 0 || len(body.Country) > 100 {
+		http.Error(w, "Invalid country information", http.StatusBadRequest)
+		return
+	}
+
+	err = db.DB.QueryRow("INSERT INTO address(user_id,adress_name,address_info,city,postal_code,country) VALUES($1,$2,$3,$4,$5,$6) RETURNING address_id", body.UserId, body.AddressName, body.AddressInfo, body.City, body.PostalCode, body.Country).Scan(&body.AddressId)
 	if err != nil {
 		http.Error(w, "Error inserting address", http.StatusInternalServerError)
 		return
@@ -2146,10 +2247,10 @@ func UpdateAdress(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode("Address updated successfully")
 }
 
-//get addresses of user
+// get addresses of user
 func GetAllAddress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodGet {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -2170,34 +2271,38 @@ func GetAllAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if body.UserId <= 0 {
+		http.Error(w, "Invalid user_id", http.StatusBadRequest)
+		return
+	}
+
 	var response []Address
-	row, err := db.DB.Query("SELECT address_id,address_name,address_info,city,postal_code,country FROM address WHERE user_id=$1",body.UserId)
+	row, err := db.DB.Query("SELECT address_id,address_name,address_info,city,postal_code,country FROM address WHERE user_id=$1", body.UserId)
 	if err != nil {
 		http.Error(w, "Error Querying address", http.StatusInternalServerError)
 		return
 	}
 
-	for row.Next(){
+	for row.Next() {
 		var x Address
-		err=row.Scan(&x.AddressId,&x.AddressName,&x.AddressInfo,&x.City,&x.PostalCode,&x.Country)
-		if err!=nil{
+		err = row.Scan(&x.AddressId, &x.AddressName, &x.AddressInfo, &x.City, &x.PostalCode, &x.Country)
+		if err != nil {
 			log.Fatal(err)
 		}
 		response = append(response, x)
 	}
 
-
 	json.NewEncoder(w).Encode(response)
 }
 
-
 type Order struct {
-	OrderId      int64   `json:"order"`
-	User_id      int64   `json:"user_id"`
-	PaymentRefId string  `json:"payment_ref_id"`
-	ShipAddress  int64   `json:"shipment_address"`
+	OrderId      int64   `json:"order_id"`
+	User_id      int64   `json:"user_id,omitempty"`
+	PaymentRefId *string `json:"payment_ref_id"`
+	ShipAddress  *int64  `json:"shipment_address"`
 	ItemDetails  ItemMap `json:"item_details"`
-	Token        string  `json:"token"`
+	Updated_on   string  `json:"updated_on,omitempty"`
+	Token        string  `json:"token,omitempty"`
 }
 
 // create order
@@ -2237,7 +2342,7 @@ func CreateOrder(w http.ResponseWriter, r *http.Request) {
 // update order //this handler only updates address for the shipment
 func UpdatePaymentRefId(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -2256,10 +2361,21 @@ func UpdatePaymentRefId(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("UPDATE orders SET payment_ref_id=$1,order_status='Order-Placed' WHERE order_id=$2 AND shipment_address IS NOT NULL RETURNING order_id",body.PaymentRefId,body.OrderId).Scan(&body.OrderId)
+	if body.OrderId <= 0 || body.PaymentRefId == nil {
+		http.Error(w, "Invalid order id or missing payment_id", http.StatusBadRequest)
+		return
+	}
+
+	err = db.DB.QueryRow("UPDATE orders SET payment_ref_id=$1,order_status='Order-Placed',updated_on=now() WHERE order_id=$2 AND shipment_address_id IS NOT NULL RETURNING order_id", body.PaymentRefId, body.OrderId).Scan(&body.OrderId)
 	if err != nil {
+		log.Fatal(err)
 		http.Error(w, "Error updating payment_ref_id", http.StatusInternalServerError)
 		return
+	}
+
+	_, err = db.DB.Exec("UPDATE cart SET checked_out=true WHERE cart_id=$1", body.User_id)
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	json.NewEncoder(w).Encode("Payment Successful")
@@ -2268,7 +2384,7 @@ func UpdatePaymentRefId(w http.ResponseWriter, r *http.Request) {
 
 func UpdateShipmentAddress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodPost {
+	if r.Method != http.MethodPut {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -2287,9 +2403,15 @@ func UpdateShipmentAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = db.DB.QueryRow("UPDATE orders SET shipment_address_id=$1 WHERE order_id=$2 RETURNING order_id",body.ShipAddress,body.OrderId).Scan(&body.OrderId)
+	if body.ShipAddress == nil {
+		http.Error(w, "Invalid shipment address id", http.StatusBadRequest)
+		return
+	}
+
+	_, err = db.DB.Exec("UPDATE orders SET shipment_address_id=$1 WHERE order_id=$2", body.ShipAddress, body.OrderId)
 	if err != nil {
-		http.Error(w, "Error creating order", http.StatusInternalServerError)
+		fmt.Println(err)
+		http.Error(w, "Error updating ahipment address", http.StatusInternalServerError)
 		return
 	}
 
@@ -2297,4 +2419,52 @@ func UpdateShipmentAddress(w http.ResponseWriter, r *http.Request) {
 
 }
 
+func Myorders(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 
+	var request Order
+	err := json.NewDecoder(r.Body).Decode(&request)
+	if err != nil {
+		http.Error(w, "Error decoding request body", http.StatusBadRequest)
+		return
+	}
+
+	//specify the permission id
+	valid, _ := authorise.CheckPerm(request.Token, 20)
+	if !valid {
+		http.Error(w, "User unauthorised", http.StatusUnauthorized)
+		return
+	}
+
+	if request.User_id <= 0 {
+		http.Error(w, "Invalid user_id", http.StatusBadRequest)
+		return
+	}
+
+	row, err := db.DB.Query("SELECT order_id,payment_ref_id,shipment_address_id,updated_on,item_details FROM orders WHERE user_id=$1", request.User_id)
+	if err != nil {
+		log.Fatal(err)
+
+	}
+	var items []byte
+	var orders []Order
+	for row.Next() {
+		var body Order
+		err = row.Scan(&body.OrderId, &body.PaymentRefId, &body.ShipAddress, &body.Updated_on, &items)
+		if err != nil {
+			log.Fatal(err)
+		}
+
+		if err = json.Unmarshal(items, &body.ItemDetails); err != nil {
+			log.Fatal(err)
+		}
+
+		orders = append(orders, body)
+	}
+
+	json.NewEncoder(w).Encode(orders)
+}

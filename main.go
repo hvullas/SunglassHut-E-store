@@ -37,6 +37,8 @@ func main() {
 
 	http.HandleFunc("/product-by-tag/", handlers.ProductByTag)
 
+	http.HandleFunc("/products/sort/", handlers.SortOnPrice)
+
 	http.HandleFunc("/create-brand", handlers.CreateBrands)
 
 	http.HandleFunc("/update-brand", handlers.UpdateBrands)
@@ -99,6 +101,22 @@ func main() {
 	http.HandleFunc("/cart/delete-item", handlers.DeleteItemsInCart)
 
 	http.HandleFunc("/cart/items", handlers.ItemsInCart)
+
+	http.HandleFunc("/create-order", handlers.CreateOrder)
+
+	http.HandleFunc("/order/update-address-id", handlers.UpdateShipmentAddress)
+
+	http.HandleFunc("/order/update-payment-ref-id", handlers.UpdatePaymentRefId)
+
+	http.HandleFunc("/order/myorders", handlers.Myorders)
+
+	//http.HandleFunc("/order/delete",handlers.DeleteOrder)
+
+	http.HandleFunc("/delete-address", handlers.DeleteAddress)
+
+	http.HandleFunc("/add_address", handlers.AddAdress)
+
+	http.HandleFunc("/addresses", handlers.GetAllAddress)
 
 	http.ListenAndServe(":3000", nil)
 
