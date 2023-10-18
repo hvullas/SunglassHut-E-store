@@ -1,10 +1,10 @@
 package main
 
 import (
-	"backend/handlers"
 	"net/http"
 
 	"backend/db"
+	"backend/handlers"
 
 	_ "github.com/lib/pq"
 )

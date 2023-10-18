@@ -3,6 +3,7 @@ package handlers
 import (
 	"backend/authorise"
 	"backend/db"
+	"backend/models"
 	"backend/token"
 	"database/sql"
 	"encoding/json"
@@ -18,19 +19,6 @@ import (
 	"golang.org/x/crypto/bcrypt"
 )
 
-type NewUserReg struct {
-	UserName    string  `json:"user_name"`
-	Email       string  `json:"email"`
-	PhoneNumber string  `json:"phone_number"`
-	Password    string  `json:"password"`
-	Role        []int64 `json:"role"`
-}
-
-type UserId struct {
-	UserId int64  `json:"user_id,omitempty"`
-	Token  string `json:"token,omitempty"`
-}
-
 // user registration handler
 func NewUser(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -40,7 +28,7 @@ func NewUser(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userdata NewUserReg
+	var userdata models.NewUserReg
 	err := json.NewDecoder(r.Body).Decode(&userdata)
 	if err != nil {
 		w.WriteHeader(http.StatusBadRequest)
@@ -88,7 +76,7 @@ func NewUser(w http.ResponseWriter, r *http.Request) {
 	if len(userdata.Role) == 0 {
 		http.Error(w, "Role not mentioned", http.StatusBadRequest)
 	}
-	var userId UserId
+	var userId models.UserId
 	err = db.DB.QueryRow("INSERT INTO users(name,email,phone_number,role,password) VALUES($1,$2,$3,$4,$5) RETURNING user_id", userdata.UserName, userdata.Email, userdata.PhoneNumber, pq.Array(userdata.Role), string(hash)).Scan(&userId.UserId)
 	if err != nil {
 		fmt.Println(err)
@@ -126,18 +114,6 @@ func NewUser(w http.ResponseWriter, r *http.Request) {
 
 }
 
-type Credentials struct {
-	Email    string `json:"email"`
-	Password string `json:"password"`
-}
-
-type Session struct {
-	UserId int64   `json:"user_id"`
-	Name   string  `json:"user_name"`
-	Role   []int64 `json:"role"`
-	Token  string  `json:"token"`
-}
-
 // login handler
 func Login(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -147,13 +123,13 @@ func Login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var credentials Credentials
+	var credentials models.Credentials
 	err := json.NewDecoder(r.Body).Decode(&credentials)
 	if err != nil {
 		http.Error(w, "Error decoding the body", http.StatusBadRequest)
 		return
 	}
-	var session Session
+	var session models.Session
 	var passwordHash, name string
 	var role pq.Int64Array
 	err = db.DB.QueryRow("SELECT user_id,name,password,role FROM users WHERE email=$1", credentials.Email).Scan(&session.UserId, &session.Name, &passwordHash, &role)
@@ -195,54 +171,6 @@ func Login(w http.ResponseWriter, r *http.Request) {
 
 }
 
-type Token struct {
-	Token string `json:"token"`
-}
-
-type Brand struct {
-	BrandId    int64    `json:"brand_id,omitempty"`
-	BrandName  string   `json:"brand_name,omitempty"`
-	BrandLogo  string   `json:"brand_logo,omitempty"`
-	BrandInfo  string   `json:"brand_info,omitempty"`
-	BrandImage []string `json:"images,omitempty"`
-	Token      string   `json:"token,omitempty"`
-}
-
-type ProductPic struct {
-	Front string `json:"front_view,omitempty"`
-	Back  string `json:"back_view,omitempty"`
-	Side  string `json:"side_view,omitempty"`
-	Top   string `json:"top_view,omitempty"`
-}
-
-type Product struct {
-	ProductId         int64    `json:"product_id,omitempty"`
-	ProductName       string   `json:"product_name,omitempty"`
-	ProductCategory   string   `json:"product_category,omitempty"` //M or F or U
-	GlassType         string   `json:"glass_type,omitempty"`       //polarized or clear&photochromatic lenses
-	ProductPrice      float64  `json:"product_price,omitempty"`
-	ProductURL        []string `json:"product_pictures,omitempty"`
-	ProductDimensions []int64  `json:"dimensions,omitempty"`
-	FrameSize         string   `json:"frame_size,omitempty"`
-	FrameColor        []string `json:"frame_color,omitempty"`
-	FrameType         string   `json:"frame_type,omitempty"`
-	FrameShape        string   `json:"frame_shape,omitempty"`
-	FrameMaterial     string   `json:"rame_material,omitempty"`
-	Fit               string   `json:"fit,omitempty"`
-	LensFeature       string   `json:"lens_feature,omitempty"`
-	LensHeight        int64    `json:"lens_height,omitempty"`
-	LensColor         string   `json:"lens_color,omitempty"`
-	LensMaterial      string   `json:"lens_material,omitempty"`
-	SuitableFaces     []string `json:"suitable_faces,omitempty"`
-	ProductInfo       string   `json:"product_info,omitempty"`
-	AvailableQuantity int64    `json:"available_quantity,omitempty"`
-	DiscountedPrice   *float64 `json:"discounted_price,omitempty"`
-	Brand             Brand    `json:"brand,omitempty"`
-	BrandId           int64    `json:"brand_id,omitempty"`
-
-	Token string `json:"token,omitempty"`
-}
-
 // homepage handler
 func AllBrands(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -252,7 +180,7 @@ func AllBrands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var jwttoken Token
+	var jwttoken models.Token
 	err := json.NewDecoder(r.Body).Decode(&jwttoken)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -265,14 +193,14 @@ func AllBrands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var brand []Brand
+	var brand []models.Brand
 	row, err := db.DB.Query("SELECT brand_id,brand_name,brand_logo,brand_images FROM brands")
 	if err != nil {
 		http.Error(w, "Query error on brands", http.StatusInternalServerError)
 		return
 	}
 	for row.Next() {
-		var brand_info Brand
+		var brand_info models.Brand
 		err = row.Scan(&brand_info.BrandId, &brand_info.BrandName, &brand_info.BrandLogo, pq.Array(&brand_info.BrandImage))
 		if err != nil {
 			http.Error(w, "Scan error on brands", http.StatusInternalServerError)
@@ -311,7 +239,7 @@ func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
 		category = "F"
 	}
 
-	var jwttoken Token
+	var jwttoken models.Token
 	err := json.NewDecoder(r.Body).Decode(&jwttoken)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -324,7 +252,7 @@ func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var products []Product
+	var products []models.Product
 	row, err := db.DB.Query("SELECT product_id,product_name,category,product_image,product_price FROM products WHERE category=$1", category)
 	if err != nil {
 		fmt.Println(err)
@@ -333,7 +261,7 @@ func ProductsByCategory(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var prod Product
+		var prod models.Product
 		err = row.Scan(&prod.ProductId, &prod.ProductName, &prod.ProductCategory, pq.Array(&prod.ProductURL), &prod.ProductPrice)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
@@ -365,7 +293,7 @@ func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var jwttoken Token
+	var jwttoken models.Token
 	err = json.NewDecoder(r.Body).Decode(&jwttoken)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -378,7 +306,7 @@ func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var products []Product
+	var products []models.Product
 	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,discounted_price,glass_type FROM products WHERE brand_id=$1", brandId)
 	if err != nil {
 		fmt.Println(err)
@@ -387,7 +315,7 @@ func ProductsByBrand(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var prod Product
+		var prod models.Product
 		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.DiscountedPrice, &prod.GlassType)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
@@ -411,7 +339,7 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var jwttoken Token
+	var jwttoken models.Token
 	err := json.NewDecoder(r.Body).Decode(&jwttoken)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -424,7 +352,7 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var products []Product
+	var products []models.Product
 	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type FROM products WHERE created_at > now()-INTERVAL '15' day")
 	if err != nil {
 		fmt.Println(err)
@@ -433,7 +361,7 @@ func NewArrival(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var prod Product
+		var prod models.Product
 		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
@@ -456,7 +384,7 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var jwttoken Token
+	var jwttoken models.Token
 	err := json.NewDecoder(r.Body).Decode(&jwttoken)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -469,7 +397,7 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var products []Product
+	var products []models.Product
 	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price FROM products WHERE discounted_price IS NOT NULL")
 	if err != nil {
 		fmt.Println(err)
@@ -478,7 +406,7 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var prod Product
+		var prod models.Product
 		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
@@ -493,13 +421,6 @@ func Sales(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(products)
 }
 
-// request body to get products by gender(men/women)
-type ProductByCategory struct {
-	Token    string `json:"token"`
-	Brand_id int64  `json:"brand_id"`
-	Category string `json:"category"`
-}
-
 // get products for men and women by brands
 func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -509,7 +430,7 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var info ProductByCategory
+	var info models.ProductByCategory
 	err := json.NewDecoder(r.Body).Decode(&info)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -522,7 +443,7 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var products []Product
+	var products []models.Product
 	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price,category FROM products WHERE brand_id=$1 AND category=$2", info.Brand_id, info.Category)
 	if err != nil {
 		fmt.Println(err)
@@ -531,7 +452,7 @@ func ProductsForGender(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var prod Product
+		var prod models.Product
 		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
@@ -562,7 +483,7 @@ func ProductById(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var token Token
+	var token models.Token
 	err = json.NewDecoder(r.Body).Decode(&token)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -575,7 +496,7 @@ func ProductById(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var prod Product
+	var prod models.Product
 	err = db.DB.QueryRow("SELECT product_id,product_name,dimensions,frame_size,frame_color,frame_type,frame_shape,frame_material,fit,lens_feature,lens_height,lens_color,lens_material,suitable_faces,product_information,glass_type,product_image,product_price,discounted_price,brand_name,brand_logo,brand_info FROM products inner join brands ON products.brand_id=brands.brand_id WHERE product_id=$1", id).Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductDimensions), &prod.FrameSize, pq.Array(&prod.FrameColor), &prod.FrameType, &prod.FrameShape, &prod.FrameMaterial, &prod.Fit, &prod.LensFeature, &prod.LensHeight, &prod.LensColor, &prod.LensMaterial, pq.Array(&prod.SuitableFaces), &prod.ProductInfo, &prod.GlassType, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.DiscountedPrice, &prod.Brand.BrandName, &prod.Brand.BrandLogo, &prod.Brand.BrandInfo)
 	if err != nil {
 		// fmt.Println(err)
@@ -606,7 +527,7 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var info ProductByCategory
+	var info models.ProductByCategory
 	err = json.NewDecoder(r.Body).Decode(&info)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -618,7 +539,7 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
-	var products []Product
+	var products []models.Product
 	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price,category FROM products WHERE $1=ANY(tags)", tagid)
 	if err != nil {
 		fmt.Println(err)
@@ -627,7 +548,7 @@ func ProductByTag(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var prod Product
+		var prod models.Product
 		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
@@ -661,7 +582,7 @@ func SortOnPrice(w http.ResponseWriter, r *http.Request) {
 		condition = "DESC"
 	}
 
-	var body Order
+	var body models.Order
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -675,7 +596,7 @@ func SortOnPrice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var products []Product
+	var products []models.Product
 	row, err := db.DB.Query("SELECT product_id,product_name,product_image,product_price,glass_type,discounted_price,category FROM products ORDER BY price $1", condition)
 	if err != nil {
 		fmt.Println(err)
@@ -684,7 +605,7 @@ func SortOnPrice(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var prod Product
+		var prod models.Product
 		err = row.Scan(&prod.ProductId, &prod.ProductName, pq.Array(&prod.ProductURL), &prod.ProductPrice, &prod.GlassType, &prod.DiscountedPrice, &prod.ProductCategory)
 		if err != nil {
 			http.Error(w, "Scan error on products", http.StatusInternalServerError)
@@ -709,7 +630,7 @@ func CreateBrands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var brandData Brand
+	var brandData models.Brand
 	err := json.NewDecoder(r.Body).Decode(&brandData)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -751,7 +672,7 @@ func UpdateBrands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var brandData Brand
+	var brandData models.Brand
 	err := json.NewDecoder(r.Body).Decode(&brandData)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -782,7 +703,7 @@ func UpdateBrandImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var brandData Brand
+	var brandData models.Brand
 	err := json.NewDecoder(r.Body).Decode(&brandData)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -832,7 +753,7 @@ func DeleteBrands(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var brandData Brand
+	var brandData models.Brand
 	err := json.NewDecoder(r.Body).Decode(&brandData)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -863,7 +784,7 @@ func CreateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var productData Product
+	var productData models.Product
 	err := json.NewDecoder(r.Body).Decode(&productData)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1009,7 +930,7 @@ func UpdateProductImages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var productData Product
+	var productData models.Product
 	err := json.NewDecoder(r.Body).Decode(&productData)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1063,7 +984,7 @@ func UpdateProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var productData Product
+	var productData models.Product
 	err := json.NewDecoder(r.Body).Decode(&productData)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1096,7 +1017,7 @@ func DeleteProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var product_id Product
+	var product_id models.Product
 	err := json.NewDecoder(r.Body).Decode(&product_id)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1225,7 +1146,7 @@ func GetAllRoles(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var token Token
+	var token models.Token
 	var roles []Role
 	err := json.NewDecoder(r.Body).Decode(&token)
 	if err != nil {
@@ -1257,12 +1178,6 @@ func GetAllRoles(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(roles)
 }
 
-type Permissions struct {
-	PermissionId   int64  `json:"permission_id,omitempty"`
-	PermissionName string `json:"permission_name,omitempty"`
-	Token          string `json:"token,omitempty"`
-}
-
 // create permissions
 func CreatePermission(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -1272,7 +1187,7 @@ func CreatePermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var permission Permissions
+	var permission models.Permissions
 	err := json.NewDecoder(r.Body).Decode(&permission)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1304,7 +1219,7 @@ func UpdatePermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var perm Permissions
+	var perm models.Permissions
 	err := json.NewDecoder(r.Body).Decode(&perm)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1340,8 +1255,8 @@ func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	var token Token
-	var perms []Permissions
+	var token models.Token
+	var perms []models.Permissions
 	err := json.NewDecoder(r.Body).Decode(&token)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1361,7 +1276,7 @@ func GetAllPermissions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for row.Next() {
-		var p Permissions
+		var p models.Permissions
 		err = row.Scan(&p.PermissionId, &p.PermissionName)
 		if err != nil {
 			http.Error(w, "Scan error on permissionss", http.StatusInternalServerError)
@@ -1382,7 +1297,7 @@ func DeletePermission(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var perm Permissions
+	var perm models.Permissions
 	err := json.NewDecoder(r.Body).Decode(&perm)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1404,14 +1319,6 @@ func DeletePermission(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode("Deleted permission successfully")
 }
 
-// create tags
-type Tags struct {
-	TagId     int64    `json:"tag_id,omitempty"`
-	TagName   string   `json:"tag_name,omitempty"`
-	TagImages []string `json:"tag_images,omitempty"`
-	Token     string   `json:"token,omitempty"`
-}
-
 // get all tags
 func GetAllTags(w http.ResponseWriter, r *http.Request) {
 	log.Println(r.URL)
@@ -1421,7 +1328,7 @@ func GetAllTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var info ProductByCategory
+	var info models.ProductByCategory
 	err := json.NewDecoder(r.Body).Decode(&info)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1433,7 +1340,7 @@ func GetAllTags(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "User unauthorised", http.StatusUnauthorized)
 		return
 	}
-	var tags []Tags
+	var tags []models.Tags
 
 	row, err := db.DB.Query("SELECT tag_id,tag_name,tag_image_url FROM tags")
 	if err != nil {
@@ -1442,7 +1349,7 @@ func GetAllTags(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var t Tags
+		var t models.Tags
 		err = row.Scan(&t.TagId, &t.TagName, pq.Array(&t.TagImages))
 		if err != nil {
 			http.Error(w, "Error scanning tags", http.StatusInternalServerError)
@@ -1467,7 +1374,7 @@ func CreateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tag Tags
+	var tag models.Tags
 	err := json.NewDecoder(r.Body).Decode(&tag)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1503,7 +1410,7 @@ func UpdateTagImage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tagImage Tags
+	var tagImage models.Tags
 	err := json.NewDecoder(r.Body).Decode(&tagImage)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1555,7 +1462,7 @@ func UpdateTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tag Tags
+	var tag models.Tags
 	err := json.NewDecoder(r.Body).Decode(&tag)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1586,7 +1493,7 @@ func DeleteTag(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var tag Tags
+	var tag models.Tags
 	err := json.NewDecoder(r.Body).Decode(&tag)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1608,14 +1515,6 @@ func DeleteTag(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode("Tag Deleted successfully")
 }
 
-//create handler for updating only the price and dicounted_price columns of products
-
-type UserRole struct {
-	UserId int64  `json:"user_id"`
-	RoleId int64  `json:"role_id,omitempty"`
-	Token  string `json:"token"`
-}
-
 // create user-role
 func CreateUserRole(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1624,7 +1523,7 @@ func CreateUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userRole UserRole
+	var userRole models.UserRole
 	err := json.NewDecoder(r.Body).Decode(&userRole)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1656,7 +1555,7 @@ func DeleteUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userRole UserRole
+	var userRole models.UserRole
 	err := json.NewDecoder(r.Body).Decode(&userRole)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1680,11 +1579,6 @@ func DeleteUserRole(w http.ResponseWriter, r *http.Request) {
 
 }
 
-type AssignedRolesOfUser struct {
-	UserId  int64   `json:"user_id"`
-	RolesId []int64 `json:"roles"`
-}
-
 // get all roles of a user querying user-role table
 func GetUserRole(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1693,7 +1587,7 @@ func GetUserRole(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var userRole UserRole
+	var userRole models.UserRole
 	err := json.NewDecoder(r.Body).Decode(&userRole)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1712,7 +1606,7 @@ func GetUserRole(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error creating user-role", http.StatusInternalServerError)
 		return
 	}
-	var assignedRoles AssignedRolesOfUser
+	var assignedRoles models.AssignedRolesOfUser
 	assignedRoles.UserId = userRole.UserId
 	for row.Next() {
 		var assignedRole int64
@@ -1728,12 +1622,6 @@ func GetUserRole(w http.ResponseWriter, r *http.Request) {
 
 }
 
-type RolePerm struct {
-	RoleId int64  `json:"role_id"`
-	PermId int64  `json:"perm_id,omitempty"`
-	Token  string `json:"token"`
-}
-
 func CreateRolePerm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if r.Method != http.MethodPost {
@@ -1741,7 +1629,7 @@ func CreateRolePerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var rolePerm RolePerm
+	var rolePerm models.RolePerm
 	err := json.NewDecoder(r.Body).Decode(&rolePerm)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1774,7 +1662,7 @@ func DeleteRolePerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var rolePerm RolePerm
+	var rolePerm models.RolePerm
 	err := json.NewDecoder(r.Body).Decode(&rolePerm)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1798,11 +1686,6 @@ func DeleteRolePerm(w http.ResponseWriter, r *http.Request) {
 
 }
 
-type AssignedPermForRole struct {
-	RoleId int64   `json:"role_id"`
-	PermId []int64 `json:"permission_ids"`
-}
-
 // get all roles of a user querying user-role table
 func GetrolePerm(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1811,7 +1694,7 @@ func GetrolePerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var rolePerm RolePerm
+	var rolePerm models.RolePerm
 	err := json.NewDecoder(r.Body).Decode(&rolePerm)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1830,7 +1713,7 @@ func GetrolePerm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Query error on user-role perm", http.StatusInternalServerError)
 		return
 	}
-	var assignedPerms AssignedPermForRole
+	var assignedPerms models.AssignedPermForRole
 	for row.Next() {
 		var assignedPerm int64
 		err = row.Scan(&assignedPerm)
@@ -1853,7 +1736,7 @@ func GetAllrolePerm(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var rolePerm RolePerm
+	var rolePerm models.RolePerm
 	err := json.NewDecoder(r.Body).Decode(&rolePerm)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1872,7 +1755,7 @@ func GetAllrolePerm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Query error on user-role perm", http.StatusInternalServerError)
 		return
 	}
-	var assignedPerms AssignedPermForRole
+	var assignedPerms models.AssignedPermForRole
 	for row.Next() {
 		var assignedPerm int64
 		err = row.Scan(&assignedPerm)
@@ -1887,22 +1770,6 @@ func GetAllrolePerm(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(assignedPerms)
 }
 
-// to read input
-type Item struct {
-	Quantity int64   `json:"quantity"`
-	Price    float64 `json:"price"`
-	Total    float64 `json:"total"`
-}
-
-type ItemMap map[string]Item
-
-type RequestBody struct {
-	Token     string  `json:"token"`
-	UserId    int64   `json:"user_id"`
-	Items     ItemMap `json:"items"`
-	ProductId string  `json:"product_id"`
-}
-
 // cart is created at user creation time
 func AddItemstoCart(w http.ResponseWriter, r *http.Request) { //todo
 	w.Header().Set("Content-Type", "application/json")
@@ -1911,7 +1778,7 @@ func AddItemstoCart(w http.ResponseWriter, r *http.Request) { //todo
 		return
 	}
 
-	var body RequestBody
+	var body models.RequestBody
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -1931,7 +1798,7 @@ func AddItemstoCart(w http.ResponseWriter, r *http.Request) { //todo
 	if err := db.DB.QueryRow(query, body.UserId).Scan(&jsonData); err != nil {
 		log.Fatal(err)
 	}
-	var data ItemMap
+	var data models.ItemMap
 	if err := json.Unmarshal(jsonData, &data); err != nil {
 		log.Fatal(err)
 	}
@@ -1954,13 +1821,6 @@ func AddItemstoCart(w http.ResponseWriter, r *http.Request) { //todo
 
 }
 
-type UpdateCart struct {
-	Token     string `json:"token"`
-	UserId    int64  `json:"user_id"`
-	ProductId int64  `json:"product_id"`
-	Item      Item   `json:"item"`
-}
-
 // update cart items -only quantity,price and totalprice of the item are implemented
 func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -1969,7 +1829,7 @@ func UpdateItemsInCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body UpdateCart
+	var body models.UpdateCart
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2016,7 +1876,7 @@ func DeleteItemsInCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body UpdateCart
+	var body models.UpdateCart
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2040,15 +1900,6 @@ func DeleteItemsInCart(w http.ResponseWriter, r *http.Request) {
 
 }
 
-type Cart struct {
-	ProductId    int      `json:"product_id"`
-	Product_name string   `json:"name"`
-	ProductImage []string `json:"images"`
-	Price        float64  `json:"price"`
-	Size         string   `json:"size"`
-	CheckOut     bool     `json:"checked_out"`
-}
-
 // getall items in cart
 func ItemsInCart(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -2057,7 +1908,7 @@ func ItemsInCart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body RequestBody
+	var body models.RequestBody
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2072,8 +1923,8 @@ func ItemsInCart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var data []byte
-	var response []Cart
-	var items ItemMap
+	var response []models.Cart
+	var items models.ItemMap
 
 	var checkout bool
 	err = db.DB.QueryRow("SELECT items,checked_out FROM cart WHERE cart_id=$1", body.UserId).Scan(&data, &checkout)
@@ -2097,7 +1948,7 @@ func ItemsInCart(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var x Cart
+		var x models.Cart
 		err = row.Scan(&x.ProductId, &x.Product_name, pq.Array(&x.ProductImage), &x.Price, &x.Size)
 		if err != nil {
 			log.Fatal(err)
@@ -2109,17 +1960,6 @@ func ItemsInCart(w http.ResponseWriter, r *http.Request) {
 
 }
 
-type Address struct {
-	AddressId   int64  `json:"address_id"`
-	UserId      int64  `json:"user_id"`
-	AddressName string `json:"address_name"`
-	AddressInfo string `json:"address_info"`
-	City        string `json:"city"`
-	PostalCode  string `json:"postal_code"`
-	Country     string `json:"country"`
-	Token       string `json:"token"`
-}
-
 // add adress
 func AddAdress(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -2128,7 +1968,7 @@ func AddAdress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body Address
+	var body models.Address
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2193,7 +2033,7 @@ func DeleteAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body Address
+	var body models.Address
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2223,7 +2063,7 @@ func UpdateAdress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body Address
+	var body models.Address
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2255,7 +2095,7 @@ func GetAllAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body Address
+	var body models.Address
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2276,7 +2116,7 @@ func GetAllAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var response []Address
+	var response []models.Address
 	row, err := db.DB.Query("SELECT address_id,address_name,address_info,city,postal_code,country FROM address WHERE user_id=$1", body.UserId)
 	if err != nil {
 		http.Error(w, "Error Querying address", http.StatusInternalServerError)
@@ -2284,7 +2124,7 @@ func GetAllAddress(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for row.Next() {
-		var x Address
+		var x models.Address
 		err = row.Scan(&x.AddressId, &x.AddressName, &x.AddressInfo, &x.City, &x.PostalCode, &x.Country)
 		if err != nil {
 			log.Fatal(err)
@@ -2295,16 +2135,6 @@ func GetAllAddress(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
-type Order struct {
-	OrderId      int64   `json:"order_id"`
-	User_id      int64   `json:"user_id,omitempty"`
-	PaymentRefId *string `json:"payment_ref_id"`
-	ShipAddress  *int64  `json:"shipment_address"`
-	ItemDetails  ItemMap `json:"item_details"`
-	Updated_on   string  `json:"updated_on,omitempty"`
-	Token        string  `json:"token,omitempty"`
-}
-
 // create order
 func CreateOrder(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
@@ -2313,7 +2143,7 @@ func CreateOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body Order
+	var body models.Order
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2347,7 +2177,7 @@ func UpdatePaymentRefId(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body Order
+	var body models.Order
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2389,7 +2219,7 @@ func UpdateShipmentAddress(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var body Order
+	var body models.Order
 	err := json.NewDecoder(r.Body).Decode(&body)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2426,7 +2256,7 @@ func Myorders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var request Order
+	var request models.Order
 	err := json.NewDecoder(r.Body).Decode(&request)
 	if err != nil {
 		http.Error(w, "Error decoding request body", http.StatusBadRequest)
@@ -2451,9 +2281,9 @@ func Myorders(w http.ResponseWriter, r *http.Request) {
 
 	}
 	var items []byte
-	var orders []Order
+	var orders []models.Order
 	for row.Next() {
-		var body Order
+		var body models.Order
 		err = row.Scan(&body.OrderId, &body.PaymentRefId, &body.ShipAddress, &body.Updated_on, &items)
 		if err != nil {
 			log.Fatal(err)

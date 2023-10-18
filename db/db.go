@@ -4,25 +4,30 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
-)
+	"os"
 
-const (
-	host     = "localhost"
-	port     = 5432
-	user     = "postgres"
-	password = "postgres.123"
-	dbname   = "sunglass_ecom"
+	"github.com/joho/godotenv"
 )
 
 var DB *sql.DB
 
 func ConnectDB() {
-	psqlinfo := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
-	var err error
+
+	err := godotenv.Load()
+	if err != nil {
+		log.Fatal(".env file couldn't load")
+	}
+	host := os.Getenv("HOST_NAME")
+	port := os.Getenv("PORT")
+	user := os.Getenv("USER")
+	password := os.Getenv("PASSWORD")
+	dbname := os.Getenv("DB_NAME")
+	psqlinfo := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable", host, port, user, password, dbname)
+
 	DB, err = sql.Open("postgres", psqlinfo)
 	if err != nil {
 		log.Fatalln(err)
 	}
-	// defer DB.Close()
+	defer DB.Close()
 
 }
